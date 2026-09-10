@@ -1,4 +1,5 @@
 
+
 import streamlit as st
 import pandas as pd
 import gspread
@@ -341,6 +342,165 @@ def aviso_generado(valor):
         "ENVIADO",
         "TRUE",
         "SI"
+    }
+
+
+# ============================================================
+# PLANTILLAS PAB
+# ============================================================
+
+def obtener_plantilla_pab(id_plantilla):
+
+    if plantillas.empty:
+        return None
+
+    if "ID_PLANTILLA" not in plantillas.columns:
+        return None
+
+    candidatos = plantillas[
+        plantillas["ID_PLANTILLA"]
+        .astype(str)
+        .str.strip()
+        .str.upper()
+        == str(id_plantilla).strip().upper()
+    ].copy()
+
+    if candidatos.empty:
+        return None
+
+    if "ESTADO" in candidatos.columns:
+
+        activas = candidatos[
+            candidatos["ESTADO"]
+            .astype(str)
+            .str.strip()
+            .str.upper()
+            == "ACTIVA"
+        ]
+
+        if not activas.empty:
+            candidatos = activas
+
+    return candidatos.iloc[0]
+
+
+def reemplazar_variables_pab(texto, fila, tipo_aviso):
+
+    texto = str(texto or "")
+
+    nombre = str(
+        fila.get(
+            "NOMBRE",
+            ""
+        )
+    ).strip()
+
+    referencia = str(
+        fila.get(
+            "REFERENCIA",
+            ""
+        )
+    ).strip()
+
+    fecha_original = str(
+        fila.get(
+            "FECHA_PAB",
+            ""
+        )
+    ).strip()
+
+    fecha_dt = fila.get(
+        "_FECHA"
+    )
+
+    if pd.notna(fecha_dt):
+        fecha_pab = fecha_dt.strftime("%d/%m/%Y")
+    else:
+        fecha_pab = fecha_original
+
+    valor_original = fila.get(
+        "VALOR_PAB",
+        ""
+    )
+
+    valor_pab = moneda(
+        numero(
+            valor_original
+        )
+    )
+
+    reemplazos = {
+        "{{NOMBRE}}": nombre,
+        "{{REFERENCIA}}": referencia,
+        "{{FECHA_PAB}}": fecha_pab,
+        "{{VALOR_PAB}}": valor_pab,
+        "{{TIPO_AVISO}}": tipo_aviso
+    }
+
+    for variable, valor in reemplazos.items():
+        texto = texto.replace(
+            variable,
+            str(valor)
+        )
+
+    return texto
+
+
+def preparar_vista_previa_pab(fila):
+
+    dias = fila.get(
+        "_DIAS"
+    )
+
+    if dias == 0:
+        id_plantilla = "PAB000"
+        tipo_aviso = "Pago programado para hoy"
+
+    elif dias == 3:
+        id_plantilla = "PAB003"
+        tipo_aviso = "Recordatorio 3 días antes"
+
+    else:
+        return None
+
+    plantilla = obtener_plantilla_pab(
+        id_plantilla
+    )
+
+    if plantilla is None:
+        return {
+            "id_plantilla": id_plantilla,
+            "tipo_aviso": tipo_aviso,
+            "error": (
+                f"No encontré la plantilla {id_plantilla} "
+                "en PLANTILLAS."
+            )
+        }
+
+    asunto = reemplazar_variables_pab(
+        plantilla.get(
+            "ASUNTO",
+            ""
+        ),
+        fila,
+        tipo_aviso
+    )
+
+    cuerpo = reemplazar_variables_pab(
+        plantilla.get(
+            "CUERPO",
+            ""
+        ),
+        fila,
+        tipo_aviso
+    )
+
+    return {
+        "id_plantilla": id_plantilla,
+        "tipo_aviso": tipo_aviso,
+        "asunto": asunto,
+        "cuerpo": cuerpo,
+        "error": None
     }
 
 
@@ -1451,9 +1611,82 @@ elif menu == "🏦 Pagos a Banco":
                         "⏳ Recordatorio del día pendiente"
                     )
 
+                st.markdown("---")
+
+                vista_previa = preparar_vista_previa_pab(
+                    fila
+                )
+
+                if vista_previa is None:
+
+                    st.info(
+                        "ℹ️ Este pago no requiere un recordatorio "
+                        "hoy. La vista previa aparecerá cuando falten "
+                        "exactamente 3 días o cuando sea la fecha del pago."
+                    )
+
+                elif vista_previa.get("error"):
+
+                    st.error(
+                        vista_previa["error"]
+                    )
+
+                else:
+
+                    st.markdown(
+                        "#### ✉️ Vista previa del correo"
+                    )
+
+                    st.caption(
+                        f"Plantilla: {vista_previa['id_plantilla']} · "
+                        f"{vista_previa['tipo_aviso']}"
+                    )
+
+                    email_cliente = str(
+                        fila.get(
+                            "EMAIL",
+                            ""
+                        )
+                    ).strip()
+
+                    if email_cliente:
+
+                        st.write(
+                            f"**Para:** {email_cliente}"
+                        )
+
+                    else:
+
+                        st.warning(
+                            "⚠️ Este registro no tiene correo del cliente."
+                        )
+
+                    st.write(
+                        "**Asunto**"
+                    )
+
+                    st.code(
+                        vista_previa["asunto"],
+                        language=None
+                    )
+
+                    st.write(
+                        "**Cuerpo**"
+                    )
+
+                    st.markdown(
+                        vista_previa["cuerpo"]
+                    )
+
+                    st.info(
+                        "🔒 Vista previa únicamente. "
+                        "Este módulo todavía NO agrega registros a "
+                        "COLA_ENVIO y NO envía correos."
+                    )
+
                 st.caption(
-                    "🔒 PaB continúa en modo lectura. "
-                    "No se generan correos desde esta pantalla todavía."
+                    "PaB permanece en modo lectura mientras validamos "
+                    "las plantillas y los datos."
                 )
 
 
