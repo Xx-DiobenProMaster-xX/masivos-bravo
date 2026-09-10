@@ -31,6 +31,14 @@ HOJA_EXCLUIR_CORREO = "Excluir_correo"
 CARTERA_BEREX_SPREADSHEET_ID = "13Vf32LzRI2V95dIUqfevzm-ZmsDR3d17UTre_7XJ-UU"
 HOJA_CARTERA_BEREX = "2. Cartera Berex"
 
+# Segunda fuente de respaldo dentro del mismo archivo
+# El código probará estos nombres de pestaña por si el nombre visible difiere.
+HOJAS_INFO_CLIENTES_V2 = [
+    "Info_Clientes_V2",
+    "Hoja Info_Clientes_V2",
+    ". Hoja Info_Clientes_V2"
+]
+
 TZ = ZoneInfo("America/Bogota")
 AHORA = datetime.now(TZ)
 HOY = AHORA.date()
@@ -716,20 +724,112 @@ def cargar_maestro_cartera_berex():
     return maestro
 
 
+
+@st.cache_data(ttl=300)
+def cargar_maestro_info_clientes_v2():
+    """
+    Segunda fuente de respaldo.
+
+    Columnas informadas por el usuario:
+    C = Referencia
+    E = Nombre cliente
+    F = Email
+    """
+
+    gc = obtener_gc()
+    archivo = gc.open_by_key(
+        CARTERA_BEREX_SPREADSHEET_ID
+    )
+
+    hoja = None
+    nombre_encontrado = None
+
+    for nombre_hoja in HOJAS_INFO_CLIENTES_V2:
+        try:
+            hoja = archivo.worksheet(nombre_hoja)
+            nombre_encontrado = nombre_hoja
+            break
+        except Exception:
+            continue
+
+    if hoja is None:
+        raise ValueError(
+            "No encontré la pestaña Info_Clientes_V2. "
+            "Probé: " + ", ".join(HOJAS_INFO_CLIENTES_V2)
+        )
+
+    # C:F -> Referencia, (D), Nombre, Email
+    valores = hoja.get("C:F")
+
+    if not valores:
+        return {}
+
+    maestro = {}
+
+    # No dependemos del texto exacto del encabezado;
+    # usamos las posiciones indicadas por el usuario.
+    for fila in valores[1:]:
+        referencia = normalizar_referencia(
+            fila[0] if len(fila) > 0 else ""
+        )
+
+        if not referencia:
+            continue
+
+        nombre = str(
+            fila[2] if len(fila) > 2 else ""
+        ).strip()
+
+        email = str(
+            fila[3] if len(fila) > 3 else ""
+        ).strip()
+
+        if referencia not in maestro:
+            maestro[referencia] = {
+                "NOMBRE": "",
+                "EMAIL": "",
+                "FUENTE": nombre_encontrado
+            }
+
+        if (
+            valor_vacio(maestro[referencia].get("NOMBRE", ""))
+            and not valor_vacio(nombre)
+        ):
+            maestro[referencia]["NOMBRE"] = nombre
+
+        if (
+            valor_vacio(maestro[referencia].get("EMAIL", ""))
+            and not valor_vacio(email)
+        ):
+            maestro[referencia]["EMAIL"] = email
+
+    return maestro
+
+
 def enriquecer_pab_con_cartera_berex(
     df_pab
 ):
+    """
+    Prioridad:
+    1. Datos ya existentes en PAB_PROXIMOS
+    2. 2. Cartera Berex
+    3. Info_Clientes_V2
+
+    Completa NOMBRE y EMAIL de forma independiente.
+    """
 
     if df_pab.empty:
-
         return (
             df_pab.copy(),
             {
-                "nombres_completados": 0,
-                "emails_completados": 0,
+                "nombres_completados_berex": 0,
+                "emails_completados_berex": 0,
+                "nombres_completados_info_v2": 0,
+                "emails_completados_info_v2": 0,
                 "sin_nombre": 0,
                 "sin_email": 0,
-                "error": None
+                "error_berex": None,
+                "error_info_v2": None
             }
         )
 
@@ -742,137 +842,98 @@ def enriquecer_pab_con_cartera_berex(
         df["EMAIL"] = ""
 
     if "REFERENCIA" not in df.columns:
-
         return (
             df,
             {
-                "nombres_completados": 0,
-                "emails_completados": 0,
+                "nombres_completados_berex": 0,
+                "emails_completados_berex": 0,
+                "nombres_completados_info_v2": 0,
+                "emails_completados_info_v2": 0,
                 "sin_nombre": len(df),
                 "sin_email": len(df),
-                "error": (
-                    "PAB_PROXIMOS no tiene "
-                    "la columna REFERENCIA."
-                )
+                "error_berex": "PAB_PROXIMOS no tiene REFERENCIA.",
+                "error_info_v2": None
             }
         )
 
+    # Fuente 1: 2. Cartera Berex
+    error_berex = None
     try:
-
-        maestro = (
-            cargar_maestro_cartera_berex()
-        )
-
+        maestro_berex = cargar_maestro_cartera_berex()
     except Exception as e:
+        maestro_berex = {}
+        error_berex = str(e)
 
-        return (
-            df,
-            {
-                "nombres_completados": 0,
-                "emails_completados": 0,
-                "sin_nombre": int(
-                    df["NOMBRE"]
-                    .apply(valor_vacio)
-                    .sum()
-                ),
-                "sin_email": int(
-                    df["EMAIL"]
-                    .apply(valor_vacio)
-                    .sum()
-                ),
-                "error": str(e)
-            }
-        )
+    # Fuente 2: Info_Clientes_V2
+    error_info_v2 = None
+    try:
+        maestro_info_v2 = cargar_maestro_info_clientes_v2()
+    except Exception as e:
+        maestro_info_v2 = {}
+        error_info_v2 = str(e)
 
-    nombres_completados = 0
-    emails_completados = 0
+    nb = eb = nv2 = ev2 = 0
 
     for idx in df.index:
-
         referencia = normalizar_referencia(
-            df.at[
-                idx,
-                "REFERENCIA"
-            ]
+            df.at[idx, "REFERENCIA"]
         )
 
-        datos = maestro.get(
-            referencia
-        )
-
-        if not datos:
+        if not referencia:
             continue
 
-        if valor_vacio(
-            df.at[
-                idx,
-                "NOMBRE"
-            ]
-        ):
+        # ---------- 2. Cartera Berex ----------
+        datos = maestro_berex.get(referencia)
 
-            nombre_maestro = datos.get(
-                "NOMBRE",
-                ""
-            )
+        if datos:
+            if valor_vacio(df.at[idx, "NOMBRE"]):
+                nombre = datos.get("NOMBRE", "")
+                if not valor_vacio(nombre):
+                    df.at[idx, "NOMBRE"] = nombre
+                    nb += 1
 
-            if not valor_vacio(
-                nombre_maestro
-            ):
+            if valor_vacio(df.at[idx, "EMAIL"]):
+                email = datos.get("EMAIL", "")
+                if not valor_vacio(email):
+                    df.at[idx, "EMAIL"] = email
+                    eb += 1
 
-                df.at[
-                    idx,
-                    "NOMBRE"
-                ] = nombre_maestro
+        # ---------- Info_Clientes_V2 ----------
+        # Solo entra si todavía falta algo.
+        datos_v2 = maestro_info_v2.get(referencia)
 
-                nombres_completados += 1
+        if datos_v2:
+            if valor_vacio(df.at[idx, "NOMBRE"]):
+                nombre = datos_v2.get("NOMBRE", "")
+                if not valor_vacio(nombre):
+                    df.at[idx, "NOMBRE"] = nombre
+                    nv2 += 1
 
-        if valor_vacio(
-            df.at[
-                idx,
-                "EMAIL"
-            ]
-        ):
-
-            email_maestro = datos.get(
-                "EMAIL",
-                ""
-            )
-
-            if not valor_vacio(
-                email_maestro
-            ):
-
-                df.at[
-                    idx,
-                    "EMAIL"
-                ] = email_maestro
-
-                emails_completados += 1
+            if valor_vacio(df.at[idx, "EMAIL"]):
+                email = datos_v2.get("EMAIL", "")
+                if not valor_vacio(email):
+                    df.at[idx, "EMAIL"] = email
+                    ev2 += 1
 
     sin_nombre = int(
-        df["NOMBRE"]
-        .apply(valor_vacio)
-        .sum()
+        df["NOMBRE"].apply(valor_vacio).sum()
     )
 
     sin_email = int(
-        df["EMAIL"]
-        .apply(valor_vacio)
-        .sum()
+        df["EMAIL"].apply(valor_vacio).sum()
     )
 
     return (
         df,
         {
-            "nombres_completados": (
-                nombres_completados
-            ),
-            "emails_completados": (
-                emails_completados
-            ),
+            "nombres_completados_berex": nb,
+            "emails_completados_berex": eb,
+            "nombres_completados_info_v2": nv2,
+            "emails_completados_info_v2": ev2,
             "sin_nombre": sin_nombre,
             "sin_email": sin_email,
-            "error": None
+            "error_berex": error_berex,
+            "error_info_v2": error_info_v2
         }
     )
 
@@ -2029,57 +2090,64 @@ elif menu == "🏦 Pagos a Banco":
         unsafe_allow_html=True
     )
 
-    if info_enriquecimiento_pab.get(
-        "error"
-    ):
+    error_berex = info_enriquecimiento_pab.get(
+        "error_berex"
+    )
 
+    error_info_v2 = info_enriquecimiento_pab.get(
+        "error_info_v2"
+    )
+
+    if error_berex:
         st.warning(
-            "⚠️ No pude consultar 2. Cartera Berex. "
-            "La aplicación seguirá usando los nombres y correos "
-            "que ya existan en PAB_PROXIMOS. Detalle: "
-            + info_enriquecimiento_pab[
-                "error"
-            ]
+            "⚠️ No pude consultar 2. Cartera Berex: "
+            + error_berex
         )
 
-    else:
-
-        completados_nombre = (
-            info_enriquecimiento_pab[
-                "nombres_completados"
-            ]
+    if error_info_v2:
+        st.warning(
+            "⚠️ No pude consultar Info_Clientes_V2: "
+            + error_info_v2
         )
 
-        completados_email = (
-            info_enriquecimiento_pab[
-                "emails_completados"
-            ]
+    nb = info_enriquecimiento_pab.get(
+        "nombres_completados_berex",
+        0
+    )
+    eb = info_enriquecimiento_pab.get(
+        "emails_completados_berex",
+        0
+    )
+    nv2 = info_enriquecimiento_pab.get(
+        "nombres_completados_info_v2",
+        0
+    )
+    ev2 = info_enriquecimiento_pab.get(
+        "emails_completados_info_v2",
+        0
+    )
+
+    if nb or eb or nv2 or ev2:
+        st.success(
+            "✅ Datos completados: "
+            f"2. Cartera Berex → {nb} nombres / {eb} correos · "
+            f"Info_Clientes_V2 → {nv2} nombres / {ev2} correos"
         )
 
-        faltan_email = (
-            info_enriquecimiento_pab[
-                "sin_email"
-            ]
+    faltan_nombre = info_enriquecimiento_pab.get(
+        "sin_nombre",
+        0
+    )
+    faltan_email = info_enriquecimiento_pab.get(
+        "sin_email",
+        0
+    )
+
+    if faltan_nombre or faltan_email:
+        st.caption(
+            f"ℹ️ Aún faltan {faltan_nombre} nombres y "
+            f"{faltan_email} correos después de consultar ambas fuentes."
         )
-
-        if (
-            completados_nombre > 0
-            or
-            completados_email > 0
-        ):
-
-            st.success(
-                "✅ Datos completados desde Cartera Berex: "
-                f"{completados_nombre} nombres y "
-                f"{completados_email} correos."
-            )
-
-        if faltan_email > 0:
-
-            st.caption(
-                f"ℹ️ {faltan_email} registros todavía no tienen "
-                "correo disponible en ninguna de las dos bases."
-            )
 
     # --------------------------------------------------------
     # MÉTRICAS
