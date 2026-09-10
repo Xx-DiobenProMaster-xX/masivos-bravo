@@ -3,6 +3,8 @@ import streamlit as st
 import pandas as pd
 import gspread
 import google.auth
+import json
+from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import unicodedata
@@ -101,7 +103,40 @@ st.markdown(
 
 def obtener_gc():
 
-    credentials, _ = google.auth.default()
+    # --------------------------------------------------------
+    # STREAMLIT CLOUD
+    # Usa la cuenta de servicio guardada en Secrets
+    # --------------------------------------------------------
+
+    if "MI_JSON" in st.secrets:
+
+        info = json.loads(
+            st.secrets["MI_JSON"]
+        )
+
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive"
+        ]
+
+        credentials = (
+            Credentials
+            .from_service_account_info(
+                info,
+                scopes=scopes
+            )
+        )
+
+    # --------------------------------------------------------
+    # COLAB
+    # Mantener compatibilidad para pruebas
+    # --------------------------------------------------------
+
+    else:
+
+        credentials, _ = (
+            google.auth.default()
+        )
 
     return gspread.authorize(
         credentials
