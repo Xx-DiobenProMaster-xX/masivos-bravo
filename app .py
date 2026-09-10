@@ -1,5 +1,4 @@
 
-
 import streamlit as st
 import pandas as pd
 import gspread
@@ -23,6 +22,10 @@ st.set_page_config(
 )
 
 SPREADSHEET_ID = "1VGdEUGRDFxBjKRLF1KF7EcHIBf3f8ujtN3iPm6TatjI"
+
+# Fuente donde vive Excluir_correo
+EXCLUSIONES_SPREADSHEET_ID = "15sbBsZcMj8PMkHXByLqjcuqtvsY_2FGYiwhkKPmfIYM"
+HOJA_EXCLUIR_CORREO = "Excluir_correo"
 
 TZ = ZoneInfo("America/Bogota")
 AHORA = datetime.now(TZ)
@@ -502,6 +505,696 @@ def preparar_vista_previa_pab(fila):
         "cuerpo": cuerpo,
         "error": None
     }
+
+
+
+# ============================================================
+# COLA PAB / SEGURIDAD
+# ============================================================
+
+def obtener_hoja_externa(spreadsheet_id, nombre_hoja):
+
+    gc = obtener_gc()
+
+    archivo = gc.open_by_key(
+        spreadsheet_id
+    )
+
+    return archivo.worksheet(
+        nombre_hoja
+    )
+
+
+@st.cache_data(ttl=60)
+def obtener_referencias_excluidas():
+
+    try:
+
+        hoja = obtener_hoja_externa(
+            EXCLUSIONES_SPREADSHEET_ID,
+            HOJA_EXCLUIR_CORREO
+        )
+
+        valores = hoja.col_values(1)
+
+        if not valores:
+            return set()
+
+        referencias = {
+            str(v).strip()
+            for v in valores[1:]
+            if str(v).strip()
+        }
+
+        return referencias
+
+    except Exception as e:
+
+        raise PermissionError(
+            "No pude consultar Excluir_correo. "
+            "Por seguridad no se permitirá agregar el recordatorio "
+            "a COLA_ENVIO hasta que la cuenta de servicio tenga acceso "
+            f"al archivo de exclusiones. Detalle: {e}"
+        )
+
+
+def es_mora_180(valor):
+
+    texto = normalizar(
+        valor
+    ).replace(
+        "_",
+        " "
+    )
+
+    texto = re.sub(
+        r"\s+",
+        " ",
+        texto
+    ).strip()
+
+    return texto in {
+        "MORA 180",
+        "180"
+    }
+
+
+def obtener_encabezados_hoja(hoja):
+
+    encabezados = hoja.row_values(1)
+
+    return [
+        str(x).strip()
+        for x in encabezados
+    ]
+
+
+def construir_fila_por_encabezados(
+    encabezados,
+    datos
+):
+
+    return [
+        datos.get(
+            encabezado,
+            ""
+        )
+        for encabezado in encabezados
+    ]
+
+
+def existe_envio_pab_en_cola(
+    referencia,
+    id_plantilla,
+    fecha_pab
+):
+
+    archivo = obtener_archivo()
+
+    hoja = archivo.worksheet(
+        "COLA_ENVIO"
+    )
+
+    valores = hoja.get_all_values()
+
+    if len(valores) <= 1:
+        return False
+
+    encabezados = [
+        str(x).strip()
+        for x in valores[0]
+    ]
+
+    try:
+        i_ref = encabezados.index(
+            "REFERENCIA"
+        )
+        i_plantilla = encabezados.index(
+            "PLANTILLA"
+        )
+        i_estado = encabezados.index(
+            "ESTADO"
+        )
+
+    except ValueError:
+        return False
+
+    referencia = str(
+        referencia
+    ).strip()
+
+    id_plantilla = str(
+        id_plantilla
+    ).strip().upper()
+
+    for fila in valores[1:]:
+
+        ref = (
+            str(fila[i_ref]).strip()
+            if len(fila) > i_ref
+            else ""
+        )
+
+        plantilla = (
+            str(fila[i_plantilla]).strip().upper()
+            if len(fila) > i_plantilla
+            else ""
+        )
+
+        estado = (
+            str(fila[i_estado]).strip().upper()
+            if len(fila) > i_estado
+            else ""
+        )
+
+        if (
+            ref == referencia
+            and
+            plantilla == id_plantilla
+            and
+            estado not in {
+                "ERROR",
+                "CANCELADO",
+                "BLOQUEADO"
+            }
+        ):
+            return True
+
+    return False
+
+
+def asegurar_campana_pab(
+    id_campana
+):
+
+    archivo = obtener_archivo()
+
+    hoja = archivo.worksheet(
+        "CAMPAÑAS"
+    )
+
+    valores = hoja.get_all_values()
+
+    if valores:
+
+        encabezados = [
+            str(x).strip()
+            for x in valores[0]
+        ]
+
+    else:
+
+        raise ValueError(
+            "CAMPAÑAS no tiene encabezados."
+        )
+
+    if "ID_CAMPAÑA" not in encabezados:
+
+        raise ValueError(
+            "No encontré ID_CAMPAÑA en CAMPAÑAS."
+        )
+
+    i_id = encabezados.index(
+        "ID_CAMPAÑA"
+    )
+
+    for fila in valores[1:]:
+
+        valor = (
+            str(fila[i_id]).strip()
+            if len(fila) > i_id
+            else ""
+        )
+
+        if valor == id_campana:
+            return
+
+    datos = {
+        "ID_CAMPAÑA": id_campana,
+        "NOMBRE_CAMPAÑA": (
+            f"Recordatorios PaB "
+            f"{HOY.strftime('%d/%m/%Y')}"
+        ),
+        "PLANTILLA": "PAB",
+        "FILTRO": "PAB",
+        "FECHA_ENVIO": HOY.strftime(
+            "%d/%m/%Y"
+        ),
+        "HORA_ENVIO": AHORA.strftime(
+            "%H:%M"
+        ),
+        "ESTADO": "PENDIENTE",
+        "TOTAL_CLIENTES": 0,
+        "ENVIADOS": 0,
+        "PENDIENTES": 0,
+        "ERRORES": 0,
+        "FECHA_CREACIÓN": AHORA.strftime(
+            "%d/%m/%Y %H:%M:%S"
+        ),
+        "COMENTARIOS": (
+            "Campaña creada desde Masivos Bravo"
+        )
+    }
+
+    fila_nueva = construir_fila_por_encabezados(
+        encabezados,
+        datos
+    )
+
+    hoja.append_row(
+        fila_nueva,
+        value_input_option="USER_ENTERED"
+    )
+
+
+def actualizar_contadores_campana_pab(
+    id_campana
+):
+
+    archivo = obtener_archivo()
+
+    hoja_cola = archivo.worksheet(
+        "COLA_ENVIO"
+    )
+
+    cola_valores = hoja_cola.get_all_values()
+
+    if len(cola_valores) <= 1:
+        return
+
+    encabezados_cola = [
+        str(x).strip()
+        for x in cola_valores[0]
+    ]
+
+    if (
+        "ID_CAMPAÑA" not in encabezados_cola
+        or
+        "ESTADO" not in encabezados_cola
+    ):
+        return
+
+    i_camp = encabezados_cola.index(
+        "ID_CAMPAÑA"
+    )
+    i_estado = encabezados_cola.index(
+        "ESTADO"
+    )
+
+    filas_campana = []
+
+    for fila in cola_valores[1:]:
+
+        camp = (
+            str(fila[i_camp]).strip()
+            if len(fila) > i_camp
+            else ""
+        )
+
+        if camp == id_campana:
+            filas_campana.append(
+                fila
+            )
+
+    total = len(
+        filas_campana
+    )
+
+    enviados = sum(
+        1
+        for fila in filas_campana
+        if (
+            str(
+                fila[i_estado]
+                if len(fila) > i_estado
+                else ""
+            ).strip().upper()
+            == "ENVIADO"
+        )
+    )
+
+    pendientes = sum(
+        1
+        for fila in filas_campana
+        if (
+            str(
+                fila[i_estado]
+                if len(fila) > i_estado
+                else ""
+            ).strip().upper()
+            == "PENDIENTE"
+        )
+    )
+
+    errores = sum(
+        1
+        for fila in filas_campana
+        if (
+            str(
+                fila[i_estado]
+                if len(fila) > i_estado
+                else ""
+            ).strip().upper()
+            in {
+                "ERROR",
+                "BLOQUEADO"
+            }
+        )
+    )
+
+    hoja_camp = archivo.worksheet(
+        "CAMPAÑAS"
+    )
+
+    camp_valores = hoja_camp.get_all_values()
+
+    if len(camp_valores) <= 1:
+        return
+
+    encabezados_camp = [
+        str(x).strip()
+        for x in camp_valores[0]
+    ]
+
+    if "ID_CAMPAÑA" not in encabezados_camp:
+        return
+
+    i_id = encabezados_camp.index(
+        "ID_CAMPAÑA"
+    )
+
+    fila_objetivo = None
+
+    for numero_fila, fila in enumerate(
+        camp_valores[1:],
+        start=2
+    ):
+
+        camp = (
+            str(fila[i_id]).strip()
+            if len(fila) > i_id
+            else ""
+        )
+
+        if camp == id_campana:
+            fila_objetivo = numero_fila
+            break
+
+    if not fila_objetivo:
+        return
+
+    actualizaciones = {
+        "TOTAL_CLIENTES": total,
+        "ENVIADOS": enviados,
+        "PENDIENTES": pendientes,
+        "ERRORES": errores,
+        "ESTADO": (
+            "EN PROCESO"
+            if pendientes > 0
+            else "FINALIZADA"
+        )
+    }
+
+    for encabezado, valor in actualizaciones.items():
+
+        if encabezado in encabezados_camp:
+
+            col = encabezados_camp.index(
+                encabezado
+            ) + 1
+
+            hoja_camp.update_cell(
+                fila_objetivo,
+                col,
+                valor
+            )
+
+
+def actualizar_estado_pab_proximos(
+    id_evento,
+    id_plantilla
+):
+
+    archivo = obtener_archivo()
+
+    hoja = archivo.worksheet(
+        "PAB_PROXIMOS"
+    )
+
+    valores = hoja.get_all_values()
+
+    if len(valores) <= 1:
+        raise ValueError(
+            "PAB_PROXIMOS no contiene datos."
+        )
+
+    encabezados = [
+        str(x).strip()
+        for x in valores[0]
+    ]
+
+    if "ID_EVENTO" not in encabezados:
+
+        raise ValueError(
+            "No encontré ID_EVENTO en PAB_PROXIMOS."
+        )
+
+    i_evento = encabezados.index(
+        "ID_EVENTO"
+    )
+
+    fila_objetivo = None
+
+    for numero_fila, fila in enumerate(
+        valores[1:],
+        start=2
+    ):
+
+        evento = (
+            str(fila[i_evento]).strip()
+            if len(fila) > i_evento
+            else ""
+        )
+
+        if evento == str(
+            id_evento
+        ).strip():
+
+            fila_objetivo = numero_fila
+            break
+
+    if not fila_objetivo:
+
+        raise ValueError(
+            f"No encontré ID_EVENTO {id_evento}."
+        )
+
+    if id_plantilla == "PAB003":
+        encabezado_estado = "AVISO_3_DIAS"
+
+    else:
+        encabezado_estado = "AVISO_HOY"
+
+    if encabezado_estado not in encabezados:
+
+        raise ValueError(
+            f"No encontré {encabezado_estado} "
+            "en PAB_PROXIMOS."
+        )
+
+    columna = encabezados.index(
+        encabezado_estado
+    ) + 1
+
+    hoja.update_cell(
+        fila_objetivo,
+        columna,
+        "GENERADO"
+    )
+
+
+def agregar_recordatorio_pab_a_cola(
+    fila,
+    vista_previa
+):
+
+    referencia = str(
+        fila.get(
+            "REFERENCIA",
+            ""
+        )
+    ).strip()
+
+    id_evento = str(
+        fila.get(
+            "ID_EVENTO",
+            ""
+        )
+    ).strip()
+
+    email = str(
+        fila.get(
+            "EMAIL",
+            ""
+        )
+    ).strip()
+
+    mora = fila.get(
+        "MORA",
+        ""
+    )
+
+    id_plantilla = str(
+        vista_previa[
+            "id_plantilla"
+        ]
+    ).strip().upper()
+
+    if not referencia:
+        raise ValueError(
+            "El registro no tiene REFERENCIA."
+        )
+
+    if not id_evento:
+        raise ValueError(
+            "El registro no tiene ID_EVENTO."
+        )
+
+    if not email:
+        raise ValueError(
+            "El cliente no tiene correo."
+        )
+
+    if es_mora_180(
+        mora
+    ):
+        raise ValueError(
+            "Cliente excluido automáticamente por Mora 180."
+        )
+
+    referencias_excluidas = obtener_referencias_excluidas()
+
+    if referencia in referencias_excluidas:
+        raise ValueError(
+            "Referencia bloqueada en Excluir_correo."
+        )
+
+    dias = fila.get(
+        "_DIAS"
+    )
+
+    if (
+        id_plantilla == "PAB000"
+        and dias != 0
+    ):
+        raise ValueError(
+            "PAB000 solo puede agregarse el día del pago."
+        )
+
+    if (
+        id_plantilla == "PAB003"
+        and dias != 3
+    ):
+        raise ValueError(
+            "PAB003 solo puede agregarse exactamente 3 días antes."
+        )
+
+    fecha_pab = fila.get(
+        "_FECHA"
+    )
+
+    if existe_envio_pab_en_cola(
+        referencia,
+        id_plantilla,
+        fecha_pab
+    ):
+        raise ValueError(
+            "Este recordatorio ya existe en COLA_ENVIO."
+        )
+
+    id_campana = (
+        f"PAB-{HOY.strftime('%Y%m%d')}"
+    )
+
+    asegurar_campana_pab(
+        id_campana
+    )
+
+    archivo = obtener_archivo()
+
+    hoja_cola = archivo.worksheet(
+        "COLA_ENVIO"
+    )
+
+    encabezados = obtener_encabezados_hoja(
+        hoja_cola
+    )
+
+    id_envio = (
+        f"ENV-PAB-"
+        f"{HOY.strftime('%Y%m%d')}-"
+        f"{referencia}-"
+        f"{id_plantilla}"
+    )
+
+    datos = {
+        "ID_ENVIO": id_envio,
+        "ID_CAMPAÑA": id_campana,
+        "REFERENCIA": referencia,
+        "NOMBRE": str(
+            fila.get(
+                "NOMBRE",
+                ""
+            )
+        ).strip(),
+        "EMAIL": email,
+        "PLANTILLA": id_plantilla,
+        "ASUNTO": vista_previa.get(
+            "asunto",
+            ""
+        ),
+        "ESTADO": "PENDIENTE",
+        "FECHA_PROG": AHORA.strftime(
+            "%d/%m/%Y %H:%M"
+        ),
+        "FECHA_ENVIO": "",
+        "INTENTOS": 0,
+        "ERROR": "",
+        "ID_MENSAJE": "",
+        "CUERPO": vista_previa.get(
+            "cuerpo",
+            ""
+        ),
+        "ENCARGADO": str(
+            fila.get(
+                "ENCARGADO",
+                ""
+            )
+        ).strip()
+    }
+
+    fila_nueva = construir_fila_por_encabezados(
+        encabezados,
+        datos
+    )
+
+    hoja_cola.append_row(
+        fila_nueva,
+        value_input_option="USER_ENTERED"
+    )
+
+    actualizar_estado_pab_proximos(
+        id_evento,
+        id_plantilla
+    )
+
+    actualizar_contadores_campana_pab(
+        id_campana
+    )
+
+    st.cache_data.clear()
+
+    return id_envio
 
 
 # ============================================================
@@ -1679,14 +2372,99 @@ elif menu == "🏦 Pagos a Banco":
                     )
 
                     st.info(
-                        "🔒 Vista previa únicamente. "
-                        "Este módulo todavía NO agrega registros a "
-                        "COLA_ENVIO y NO envía correos."
+                        "🔒 Este botón solo agrega el recordatorio a "
+                        "COLA_ENVIO. No envía el correo directamente."
                     )
 
+                    puede_agregar = True
+                    motivo_bloqueo = ""
+
+                    if not email_cliente:
+
+                        puede_agregar = False
+                        motivo_bloqueo = (
+                            "El cliente no tiene correo."
+                        )
+
+                    elif es_mora_180(
+                        fila.get(
+                            "MORA",
+                            ""
+                        )
+                    ):
+
+                        puede_agregar = False
+                        motivo_bloqueo = (
+                            "Cliente excluido por Mora 180."
+                        )
+
+                    elif (
+                        vista_previa["id_plantilla"] == "PAB000"
+                        and fila.get("_AVISO_HOY", False)
+                    ):
+
+                        puede_agregar = False
+                        motivo_bloqueo = (
+                            "El recordatorio de hoy ya figura como generado."
+                        )
+
+                    elif (
+                        vista_previa["id_plantilla"] == "PAB003"
+                        and fila.get("_AVISO_3", False)
+                    ):
+
+                        puede_agregar = False
+                        motivo_bloqueo = (
+                            "El recordatorio de 3 días ya figura como generado."
+                        )
+
+                    if not puede_agregar:
+
+                        st.warning(
+                            f"⚠️ {motivo_bloqueo}"
+                        )
+
+                    confirmar = st.checkbox(
+                        "Confirmo que revisé la vista previa y quiero "
+                        "agregar este recordatorio a COLA_ENVIO.",
+                        key=f"confirmar_pab_{idx}"
+                    )
+
+                    if st.button(
+                        "📤 Agregar recordatorio a COLA_ENVIO",
+                        key=f"agregar_pab_{idx}",
+                        use_container_width=True,
+                        type="primary",
+                        disabled=(
+                            (not confirmar)
+                            or
+                            (not puede_agregar)
+                        )
+                    ):
+
+                        try:
+
+                            id_envio = agregar_recordatorio_pab_a_cola(
+                                fila,
+                                vista_previa
+                            )
+
+                            st.success(
+                                "✅ Recordatorio agregado correctamente "
+                                f"a COLA_ENVIO. ID: {id_envio}"
+                            )
+
+                            st.rerun()
+
+                        except Exception as e:
+
+                            st.error(
+                                f"❌ No se pudo agregar: {e}"
+                            )
+
                 st.caption(
-                    "PaB permanece en modo lectura mientras validamos "
-                    "las plantillas y los datos."
+                    "Masivos Bravo valida duplicados, Mora 180 y "
+                    "Excluir_correo antes de escribir en COLA_ENVIO."
                 )
 
 
@@ -2222,7 +3000,7 @@ elif menu == "⚙️ Configuración":
     )
 
     st.write(
-        "**Pagos a Banco:** solo lectura"
+        "**Pagos a Banco:** vista previa + agregar a COLA_ENVIO"
     )
 
     st.write(
