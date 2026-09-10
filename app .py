@@ -530,22 +530,55 @@ def obtener_hoja_externa(spreadsheet_id, nombre_hoja):
 
 
 def normalizar_referencia(valor):
+    """
+    Convierte referencias provenientes de distintas hojas a una llave común.
 
-    texto = str(
-        valor or ""
-    ).strip()
+    Ejemplos que terminan como 3115580892:
+    - 3115580892
+    - "3115580892"
+    - "3115580892.0"
+    - "3.115.580.892"
+    - "3,115,580,892"
+    - " 3115580892 "
+    """
+    if valor is None:
+        return ""
+
+    texto = str(valor).strip()
 
     if not texto:
         return ""
 
-    # Corrige referencias que puedan venir como 3183100325.0
-    if re.fullmatch(
-        r"\d+\.0",
-        texto
-    ):
-        texto = texto[:-2]
+    if texto.upper() in {"NAN", "NONE", "NULL"}:
+        return ""
 
-    return texto
+    # Quitar espacios normales y espacios no separables.
+    texto = texto.replace("\xa0", "").replace(" ", "")
+
+    # Caso típico de Sheets/Pandas: 3115580892.0
+    if re.fullmatch(r"[+-]?\d+\.0+", texto):
+        return texto.split(".")[0].lstrip("+")
+
+    # Si es un entero con separadores de miles, quitarlos.
+    if re.fullmatch(r"[+-]?\d{1,3}([.,]\d{3})+", texto):
+        return re.sub(r"[.,]", "", texto).lstrip("+")
+
+    # Si ya son solo dígitos, devolverlos.
+    if re.fullmatch(r"[+-]?\d+", texto):
+        return texto.lstrip("+")
+
+    # Intentar notación científica o número decimal exacto.
+    try:
+        numero_ref = float(texto.replace(",", ""))
+        if numero_ref.is_integer():
+            return str(int(numero_ref))
+    except Exception:
+        pass
+
+    # Último recurso: conservar solo dígitos.
+    # Esto permite empatar referencias con caracteres invisibles o separadores.
+    solo_digitos = re.sub(r"\D", "", texto)
+    return solo_digitos
 
 
 def valor_vacio(valor):
@@ -566,21 +599,27 @@ def valor_vacio(valor):
 
 @st.cache_data(ttl=300)
 def cargar_maestro_cartera_berex():
+    """
+    Construye un diccionario de clientes desde 2. Cartera Berex.
+
+    La búsqueda no depende de una sola columna: indexa cada cliente por
+    Referencia, Referencia_Berex y Numero. Así cubrimos diferencias entre
+    las referencias usadas por PAB_PROXIMOS y las guardadas en Cartera Berex.
+    """
 
     hoja = obtener_hoja_externa(
         CARTERA_BEREX_SPREADSHEET_ID,
         HOJA_CARTERA_BEREX
     )
 
-    # B:F incluye:
+    # B:G:
     # B Referencia
     # C Referencia_Berex
     # D Cedula
     # E Nombre_Cliente
     # F Email
-    valores = hoja.get(
-        "B:F"
-    )
+    # G Numero
+    valores = hoja.get("B:G")
 
     if not valores:
         return {}
@@ -596,45 +635,60 @@ def cargar_maestro_cartera_berex():
         "Email"
     }
 
-    faltantes = (
-        requeridos
-        - set(encabezados)
-    )
+    faltantes = requeridos - set(encabezados)
 
     if faltantes:
-
         raise ValueError(
             "Faltan columnas en 2. Cartera Berex: "
-            + ", ".join(
-                sorted(faltantes)
-            )
+            + ", ".join(sorted(faltantes))
         )
 
-    i_ref = encabezados.index(
-        "Referencia"
-    )
+    i_nombre = encabezados.index("Nombre_Cliente")
+    i_email = encabezados.index("Email")
 
-    i_nombre = encabezados.index(
-        "Nombre_Cliente"
-    )
+    columnas_llave = [
+        c
+        for c in [
+            "Referencia",
+            "Referencia_Berex",
+            "Numero"
+        ]
+        if c in encabezados
+    ]
 
-    i_email = encabezados.index(
-        "Email"
-    )
+    indices_llave = [
+        encabezados.index(c)
+        for c in columnas_llave
+    ]
 
     maestro = {}
 
+    def guardar_datos(llave, nombre, email):
+        llave = normalizar_referencia(llave)
+
+        if not llave:
+            return
+
+        if llave not in maestro:
+            maestro[llave] = {
+                "NOMBRE": "",
+                "EMAIL": ""
+            }
+
+        # Solo completa; nunca reemplaza un dato válido por uno vacío.
+        if (
+            valor_vacio(maestro[llave].get("NOMBRE", ""))
+            and not valor_vacio(nombre)
+        ):
+            maestro[llave]["NOMBRE"] = nombre
+
+        if (
+            valor_vacio(maestro[llave].get("EMAIL", ""))
+            and not valor_vacio(email)
+        ):
+            maestro[llave]["EMAIL"] = email
+
     for fila in valores[1:]:
-
-        referencia = normalizar_referencia(
-            fila[i_ref]
-            if len(fila) > i_ref
-            else ""
-        )
-
-        if not referencia:
-            continue
-
         nombre = str(
             fila[i_nombre]
             if len(fila) > i_nombre
@@ -647,46 +701,17 @@ def cargar_maestro_cartera_berex():
             else ""
         ).strip()
 
-        # Si hay referencias repetidas, conserva/completa
-        # la mejor información encontrada.
-        if referencia not in maestro:
-
-            maestro[referencia] = {
-                "NOMBRE": nombre,
-                "EMAIL": email
-            }
-
-        else:
-
-            if (
-                valor_vacio(
-                    maestro[referencia].get(
-                        "NOMBRE",
-                        ""
-                    )
-                )
-                and
-                not valor_vacio(nombre)
-            ):
-
-                maestro[referencia][
-                    "NOMBRE"
-                ] = nombre
-
-            if (
-                valor_vacio(
-                    maestro[referencia].get(
-                        "EMAIL",
-                        ""
-                    )
-                )
-                and
-                not valor_vacio(email)
-            ):
-
-                maestro[referencia][
-                    "EMAIL"
-                ] = email
+        for i_llave in indices_llave:
+            llave = (
+                fila[i_llave]
+                if len(fila) > i_llave
+                else ""
+            )
+            guardar_datos(
+                llave,
+                nombre,
+                email
+            )
 
     return maestro
 
