@@ -1,12 +1,16 @@
-name: Probar automatización PaB
+name: Automatización PaB
 
 on:
   workflow_dispatch:
 
+  schedule:
+    # 08:00 a. m. Colombia (UTC-5) = 13:00 UTC
+    - cron: "0 13 * * *"
+
 jobs:
-  probar-pab:
+  pab-automatico:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     env:
       MI_JSON: ${{ secrets.MI_JSON }}
@@ -23,5 +27,5 @@ jobs:
       - name: Instalar dependencias
         run: pip install -r requirements.txt
 
-      - name: Simular recordatorios PaB
+      - name: Generar recordatorios PaB
         run: python pab_auto.py
