@@ -37,9 +37,10 @@ INFO_CLIENTES_V2 = [
     ". Hoja Info_Clientes_V2",
 ]
 
-# IMPORTANTE:
-# BORRADOR = se agrega a COLA_ENVIO pero NO debe ser enviado.
 ESTADO_NUEVO = "BORRADOR"
+
+# Todos los PaB quedan asignados a Camila
+ENCARGADO_PAB = "Camila"
 
 
 # ============================================================
@@ -54,6 +55,7 @@ def obtener_gc():
     ).strip()
 
     if not secreto:
+
         raise RuntimeError(
             "No existe MI_JSON en GitHub Secrets."
         )
@@ -89,8 +91,12 @@ def obtener_hoja(
 
     return (
         gc
-        .open_by_key(archivo_id)
-        .worksheet(nombre_hoja)
+        .open_by_key(
+            archivo_id
+        )
+        .worksheet(
+            nombre_hoja
+        )
     )
 
 
@@ -103,18 +109,25 @@ def texto(valor):
     if valor is None:
         return ""
 
-    return str(valor).strip()
+    return str(
+        valor
+    ).strip()
 
 
 def referencia(valor):
 
-    valor = texto(valor)
+    valor = texto(
+        valor
+    )
 
     if re.fullmatch(
         r"\d+\.0+",
         valor
     ):
-        valor = valor.split(".")[0]
+
+        valor = valor.split(
+            "."
+        )[0]
 
     return re.sub(
         r"\D",
@@ -123,7 +136,9 @@ def referencia(valor):
     )
 
 
-def mapa_headers(headers):
+def mapa_headers(
+    headers
+):
 
     return {
         str(valor).strip(): i
@@ -131,9 +146,34 @@ def mapa_headers(headers):
     }
 
 
-def convertir_fecha(valor):
+def valor_fila(
+    fila,
+    headers,
+    nombre
+):
 
-    valor = texto(valor)
+    if nombre not in headers:
+        return ""
+
+    posicion = headers[
+        nombre
+    ]
+
+    if len(fila) <= posicion:
+        return ""
+
+    return texto(
+        fila[posicion]
+    )
+
+
+def convertir_fecha(
+    valor
+):
+
+    valor = texto(
+        valor
+    )
 
     if not valor:
         return None
@@ -160,7 +200,9 @@ def convertir_fecha(valor):
     return None
 
 
-def es_mora_180(valor):
+def es_mora_180(
+    valor
+):
 
     valor = (
         texto(valor)
@@ -178,25 +220,6 @@ def es_mora_180(valor):
         "MORA 180",
         "180"
     }
-
-
-def valor_fila(
-    fila,
-    headers,
-    nombre
-):
-
-    if nombre not in headers:
-        return ""
-
-    posicion = headers[nombre]
-
-    if len(fila) <= posicion:
-        return ""
-
-    return texto(
-        fila[posicion]
-    )
 
 
 def reemplazar_variables(
@@ -218,9 +241,13 @@ def reemplazar_variables(
     return contenido
 
 
-def moneda(valor):
+def moneda(
+    valor
+):
 
-    valor = texto(valor)
+    valor = texto(
+        valor
+    )
 
     if not valor:
         return "$0"
@@ -238,13 +265,18 @@ def moneda(valor):
         and "," not in limpio
     ):
 
-        partes = limpio.split(".")
+        partes = limpio.split(
+            "."
+        )
 
         if all(
             len(parte) == 3
             for parte in partes[1:]
         ):
-            limpio = "".join(partes)
+
+            limpio = "".join(
+                partes
+            )
 
     # 8,000,000
     elif (
@@ -295,7 +327,7 @@ def moneda(valor):
 
 
 # ============================================================
-# INFO CLIENTES V2
+# INFO_CLIENTES_V2
 # ============================================================
 
 def cargar_info_clientes_v2():
@@ -324,7 +356,7 @@ def cargar_info_clientes_v2():
     if hoja is None:
 
         raise RuntimeError(
-            "No encontré Info_Clientes_V2."
+            "No encontré la pestaña Info_Clientes_V2."
         )
 
     # C = Referencia
@@ -441,12 +473,6 @@ def cargar_clientes():
                 fila,
                 h,
                 "Mora"
-            ),
-
-            "encargado": valor_fila(
-                fila,
-                h,
-                "Encargado"
             )
         }
 
@@ -478,6 +504,7 @@ def cargar_exclusiones():
         )
 
         if ref:
+
             resultado.add(
                 ref
             )
@@ -499,7 +526,10 @@ def cargar_plantillas():
     datos = hoja.get_all_values()
 
     if len(datos) <= 1:
-        return {}
+
+        raise RuntimeError(
+            "PLANTILLAS no tiene información."
+        )
 
     h = mapa_headers(
         datos[0]
@@ -509,7 +539,7 @@ def cargar_plantillas():
 
     for fila in datos[1:]:
 
-        # Compatible con ID_PLANTILLA o PLANTILLA
+        # ID
         plantilla = ""
 
         if "ID_PLANTILLA" in h:
@@ -533,39 +563,33 @@ def cargar_plantillas():
         if not plantilla:
             continue
 
+        # ASUNTO
         asunto = valor_fila(
             fila,
             h,
             "ASUNTO"
         )
 
-        # Compatible con CUERPO o HTML
-        cuerpo = ""
+        # CUERPO
+        cuerpo = valor_fila(
+            fila,
+            h,
+            "CUERPO"
+        )
 
-        if "CUERPO" in h:
+        if not cuerpo:
 
-            cuerpo = valor_fila(
-                fila,
-                h,
-                "CUERPO"
+            raise RuntimeError(
+                f"La plantilla {plantilla} no tiene CUERPO."
             )
 
-        elif "HTML" in h:
-
-            cuerpo = valor_fila(
-                fila,
-                h,
-                "HTML"
-            )
-
+        # ESTADO
         estado = valor_fila(
             fila,
             h,
             "ESTADO"
         ).upper()
 
-        # Si no existe estado,
-        # asumimos ACTIVA
         if not estado:
             estado = "ACTIVA"
 
@@ -573,18 +597,21 @@ def cargar_plantillas():
             plantilla
         ] = {
 
-            "asunto": asunto,
+            "asunto":
+                asunto,
 
-            "cuerpo": cuerpo,
+            "cuerpo":
+                cuerpo,
 
-            "estado": estado
+            "estado":
+                estado
         }
 
     return resultado
 
 
 # ============================================================
-# COLA EXISTENTE
+# IDS EXISTENTES EN COLA
 # ============================================================
 
 def cargar_ids_cola():
@@ -653,7 +680,7 @@ def asegurar_campana(
         headers
     )
 
-    # Verificar si ya existe
+    # Si ya existe no la vuelve a crear
     for fila in datos[1:]:
 
         actual = valor_fila(
@@ -668,6 +695,10 @@ def asegurar_campana(
     nueva = [
         ""
     ] * len(headers)
+
+    ahora = datetime.now(
+        TZ
+    )
 
     valores = {
 
@@ -684,16 +715,12 @@ def asegurar_campana(
             "PAB",
 
         "FECHA_ENVIO":
-            datetime.now(
-                TZ
-            ).strftime(
+            ahora.strftime(
                 "%d/%m/%Y"
             ),
 
         "HORA_ENVIO":
-            datetime.now(
-                TZ
-            ).strftime(
+            ahora.strftime(
                 "%H:%M"
             ),
 
@@ -713,14 +740,15 @@ def asegurar_campana(
             0,
 
         "FECHA_CREACIÓN":
-            datetime.now(
-                TZ
-            ).strftime(
+            ahora.strftime(
                 "%d/%m/%Y %H:%M:%S"
             ),
 
         "COMENTARIOS":
-            "Creada automáticamente por GitHub Actions"
+            (
+                "Creada automáticamente "
+                "por GitHub Actions"
+            )
     }
 
     for columna, valor in valores.items():
@@ -803,6 +831,10 @@ def generar_recordatorios():
         TZ
     ).date()
 
+    ahora = datetime.now(
+        TZ
+    )
+
     id_campana = (
         "PAB-"
         + hoy.strftime(
@@ -854,13 +886,27 @@ def generar_recordatorios():
             fecha - hoy
         ).days
 
+        # 3 días antes
         if dias == 3:
 
-            plantilla_id = "PAB003"
+            plantilla_id = (
+                "PAB003"
+            )
 
+            tipo_aviso = (
+                "Recordatorio 3 días antes"
+            )
+
+        # El mismo día
         elif dias == 0:
 
-            plantilla_id = "PAB000"
+            plantilla_id = (
+                "PAB000"
+            )
+
+            tipo_aviso = (
+                "Pago programado para hoy"
+            )
 
         else:
             continue
@@ -869,9 +915,9 @@ def generar_recordatorios():
             "candidatos"
         ] += 1
 
-        # =============================
+        # ====================================================
         # DATOS DEL CLIENTE
-        # =============================
+        # ====================================================
 
         nombre = valor_fila(
             fila,
@@ -889,12 +935,6 @@ def generar_recordatorios():
             fila,
             hp,
             "MORA"
-        )
-
-        encargado = valor_fila(
-            fila,
-            hp,
-            "ENCARGADO"
         )
 
         cliente = clientes.get(
@@ -942,16 +982,17 @@ def generar_recordatorios():
                 ""
             )
 
-        if not encargado:
+        # ====================================================
+        # ENCARGADO FIJO
+        # ====================================================
 
-            encargado = cliente.get(
-                "encargado",
-                ""
-            )
+        encargado = (
+            ENCARGADO_PAB
+        )
 
-        # =============================
+        # ====================================================
         # VALIDACIONES
-        # =============================
+        # ====================================================
 
         if not email:
 
@@ -986,7 +1027,8 @@ def generar_recordatorios():
         if not plantilla:
 
             raise RuntimeError(
-                f"No encontré {plantilla_id}."
+                f"No encontré {plantilla_id} "
+                "en PLANTILLAS."
             )
 
         if (
@@ -997,12 +1039,13 @@ def generar_recordatorios():
         ):
 
             raise RuntimeError(
-                f"{plantilla_id} no está ACTIVA."
+                f"{plantilla_id} "
+                "no está ACTIVA."
             )
 
-        # =============================
-        # VARIABLES
-        # =============================
+        # ====================================================
+        # VARIABLES DEL CORREO
+        # ====================================================
 
         valor_pab = valor_fila(
             fila,
@@ -1029,12 +1072,7 @@ def generar_recordatorios():
                 ),
 
             "{{TIPO_AVISO}}":
-                (
-                    "Pago programado para hoy"
-                    if plantilla_id == "PAB000"
-                    else
-                    "Recordatorio 3 días antes"
-                )
+                tipo_aviso
         }
 
         asunto = reemplazar_variables(
@@ -1051,9 +1089,16 @@ def generar_recordatorios():
             variables
         )
 
-        # =============================
+        if not cuerpo:
+
+            raise RuntimeError(
+                f"El cuerpo final de "
+                f"{plantilla_id} quedó vacío."
+            )
+
+        # ====================================================
         # ID ÚNICO
-        # =============================
+        # ====================================================
 
         id_envio = (
 
@@ -1072,13 +1117,15 @@ def generar_recordatorios():
 
             continue
 
-        # =============================
+        # ====================================================
         # CONSTRUIR FILA COLA_ENVIO
-        # =============================
+        # ====================================================
 
         nueva = [
             ""
-        ] * len(headers_cola)
+        ] * len(
+            headers_cola
+        )
 
         valores = {
 
@@ -1103,14 +1150,12 @@ def generar_recordatorios():
             "ASUNTO":
                 asunto,
 
-            # MUY IMPORTANTE
+            # TODAVÍA NO ENVÍA
             "ESTADO":
                 ESTADO_NUEVO,
 
             "FECHA_PROG":
-                datetime.now(
-                    TZ
-                ).strftime(
+                ahora.strftime(
                     "%d/%m/%Y %H:%M"
                 ),
 
@@ -1181,16 +1226,21 @@ def generar_recordatorios():
                 "asunto":
                     asunto,
 
+                "encargado":
+                    encargado,
+
                 "estado":
                     ESTADO_NUEVO,
 
                 "id_envio":
-                    id_envio
+                    id_envio,
 
+                "cuerpo_encontrado":
+                    bool(cuerpo)
             })
 
     # ========================================================
-    # ESCRIBIR
+    # ESCRITURA
     # ========================================================
 
     if filas_nuevas:
@@ -1216,9 +1266,14 @@ def generar_recordatorios():
     print(
         "\nIMPORTANTE:"
         "\nLos registros fueron creados como BORRADOR."
-        "\nNo deben ser enviados por el motor automático."
+        "\nTODOS los PaB quedan asignados a Camila."
+        "\nTodavía no se envían automáticamente."
     )
 
+
+# ============================================================
+# EJECUCIÓN
+# ============================================================
 
 if __name__ == "__main__":
 
