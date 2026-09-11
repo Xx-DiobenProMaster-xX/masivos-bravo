@@ -1709,6 +1709,90 @@ def marcar_respuesta_gestionada(
 
 
 # ============================================================
+# CAMPAÑAS MANUALES
+# ============================================================
+
+PLANTILLA_POR_FILTRO = {
+    "MORA_1": "T001",
+    "MORA_30": "T030",
+    "MORA_60": "T060",
+    "MORA_90": "T090",
+}
+
+
+def crear_campana_manual(
+    nombre_campana,
+    filtro,
+    plantilla,
+    fecha_envio,
+    hora_envio,
+    comentarios=""
+):
+    """
+    Registra una campaña creada manualmente desde Streamlit.
+
+    Por seguridad se crea como BORRADOR. Esta función NO envía correos
+    ni agrega destinatarios a COLA_ENVIO.
+    """
+
+    archivo = obtener_archivo()
+    hoja = archivo.worksheet("CAMPAÑAS")
+    valores = hoja.get_all_values()
+
+    if not valores:
+        raise ValueError("CAMPAÑAS no tiene encabezados.")
+
+    encabezados = [str(x).strip() for x in valores[0]]
+
+    ahora = datetime.now(TZ)
+    id_campana = "CAM-" + ahora.strftime("%Y%m%d-%H%M%S")
+
+    ids_existentes = set()
+    if "ID_CAMPAÑA" in encabezados:
+        i_id = encabezados.index("ID_CAMPAÑA")
+        ids_existentes = {
+            str(f[i_id]).strip()
+            for f in valores[1:]
+            if len(f) > i_id and str(f[i_id]).strip()
+        }
+
+    consecutivo = 1
+    id_base = id_campana
+    while id_campana in ids_existentes:
+        consecutivo += 1
+        id_campana = f"{id_base}-{consecutivo:02d}"
+
+    datos = {
+        "ID_CAMPAÑA": id_campana,
+        "NOMBRE_CAMPAÑA": nombre_campana.strip(),
+        "PLANTILLA": plantilla.strip().upper(),
+        "FILTRO": filtro.strip().upper(),
+        "FECHA_ENVIO": fecha_envio.strftime("%d/%m/%Y"),
+        "HORA_ENVIO": hora_envio.strftime("%H:%M"),
+        "ESTADO": "BORRADOR",
+        "TOTAL_CLIENTES": 0,
+        "ENVIADOS": 0,
+        "PENDIENTES": 0,
+        "ERRORES": 0,
+        "FECHA_CREACIÓN": ahora.strftime("%d/%m/%Y %H:%M:%S"),
+        "COMENTARIOS": comentarios.strip(),
+    }
+
+    fila_nueva = construir_fila_por_encabezados(
+        encabezados,
+        datos
+    )
+
+    hoja.append_row(
+        fila_nueva,
+        value_input_option="USER_ENTERED"
+    )
+
+    st.cache_data.clear()
+    return id_campana
+
+
+# ============================================================
 # CARGAR DATOS
 # ============================================================
 
@@ -1957,10 +2041,17 @@ total_recordatorios_pendientes = (
 # SIDEBAR
 # ============================================================
 
+if "menu_principal" not in st.session_state:
+    st.session_state["menu_principal"] = "🏠 Inicio"
+
+if "navegar_a" in st.session_state:
+    st.session_state["menu_principal"] = st.session_state.pop("navegar_a")
+
+
 with st.sidebar:
 
     st.markdown(
-        "## BRAVO S.A.S."
+        "## Masivos Correos"
     )
 
     st.caption(
@@ -1981,6 +2072,7 @@ with st.sidebar:
             "🕘 Historial",
             "⚙️ Configuración"
         ],
+        key="menu_principal",
         label_visibility="collapsed"
     )
 
@@ -2017,23 +2109,62 @@ if menu == "🏠 Inicio":
 
     st.markdown(
         '<div class="subtitulo">'
-        'Gestión de campañas y comunicaciones con clientes'
+        'Gestión de campañas, respuestas y comunicaciones con clientes'
         '</div>',
         unsafe_allow_html=True
     )
 
-    c1, c2, c3, c4 = st.columns(
-        4
-    )
+    # --------------------------------------------------------
+    # KPIs OPERATIVOS DE HOY
+    # --------------------------------------------------------
+
+    enviados_hoy = 0
+    errores_cola = 0
+
+    if not cola.empty:
+        if "ESTADO" in cola.columns:
+            estados_cola = cola["ESTADO"].astype(str).str.strip().str.upper()
+            errores_cola = int(estados_cola.isin(["ERROR", "BLOQUEADO"]).sum())
+        else:
+            estados_cola = pd.Series("", index=cola.index)
+
+        if "FECHA_ENVIO" in cola.columns:
+            fechas_envio = convertir_fechas(cola["FECHA_ENVIO"])
+            enviados_hoy = int(
+                (
+                    (estados_cola == "ENVIADO")
+                    &
+                    (fechas_envio.dt.date == HOY)
+                ).sum()
+            )
+
+    respuestas_hoy = 0
+    if not respuestas.empty and "_FECHA" in respuestas.columns:
+        respuestas_hoy = int(
+            (respuestas["_FECHA"].dt.date == HOY).sum()
+        )
+
+    campanas_activas = 0
+    if not campanas.empty and "ESTADO" in campanas.columns:
+        campanas_activas = int(
+            campanas["ESTADO"]
+            .astype(str)
+            .str.strip()
+            .str.upper()
+            .isin(["BORRADOR", "PROGRAMADA", "PENDIENTE", "EN PROCESO"])
+            .sum()
+        )
+
+    c1, c2, c3, c4 = st.columns(4)
 
     c1.metric(
-        "💬 Respuestas",
-        total_respuestas
+        "📨 Correos enviados hoy",
+        enviados_hoy
     )
 
     c2.metric(
-        "🟡 Pendientes",
-        total_pendientes
+        "💬 Respuestas nuevas hoy",
+        respuestas_hoy
     )
 
     c3.metric(
@@ -2048,27 +2179,123 @@ if menu == "🏠 Inicio":
 
     st.markdown("---")
 
-    p1, p2, p3 = st.columns(
-        3
-    )
+    p1, p2, p3, p4 = st.columns(4)
 
     p1.metric(
-        "PaB próximos 3 días",
+        "📅 PaB próximos 3 días",
         total_pab_3_dias
     )
 
     p2.metric(
-        "Valor PaB hoy",
-        moneda(
-            valor_pab_hoy
-        )
+        "💰 Valor PaB hoy",
+        moneda(valor_pab_hoy)
     )
 
     p3.metric(
-        "Recordatorios pendientes",
+        "⏳ Recordatorios PaB pendientes",
         total_recordatorios_pendientes
     )
 
+    p4.metric(
+        "📧 Campañas abiertas",
+        campanas_activas
+    )
+
+    # --------------------------------------------------------
+    # ACCIONES RÁPIDAS
+    # --------------------------------------------------------
+
+    st.markdown("---")
+    st.subheader("⚡ Acciones rápidas")
+    st.caption("Accede a las funciones que más usa el equipo.")
+
+    a1, a2, a3, a4 = st.columns(4)
+
+    with a1:
+        if st.button(
+            "➕ Nueva campaña",
+            use_container_width=True,
+            type="primary"
+        ):
+            st.session_state["navegar_a"] = "📧 Campañas"
+            st.session_state["abrir_nueva_campana"] = True
+            st.rerun()
+
+    with a2:
+        if st.button(
+            "💬 Ver respuestas",
+            use_container_width=True
+        ):
+            st.session_state["navegar_a"] = "💬 Respuestas"
+            st.rerun()
+
+    with a3:
+        if st.button(
+            "🏦 Ver pagos a banco",
+            use_container_width=True
+        ):
+            st.session_state["navegar_a"] = "🏦 Pagos a Banco"
+            st.rerun()
+
+    with a4:
+        if st.button(
+            "⚠️ Ver pendientes",
+            use_container_width=True
+        ):
+            st.session_state["navegar_a"] = "⚠️ Pendientes"
+            st.rerun()
+
+    st.markdown("---")
+
+    izquierda, derecha = st.columns([1.65, 1])
+
+    with izquierda:
+        st.subheader("🕘 Actividad reciente")
+
+        if cola.empty:
+            st.info("Todavía no hay actividad registrada en COLA_ENVIO.")
+        else:
+            actividad = cola.copy().tail(10).iloc[::-1]
+
+            columnas_actividad = [
+                c
+                for c in [
+                    "FECHA_ENVIO",
+                    "FECHA_PROG",
+                    "REFERENCIA",
+                    "PLANTILLA",
+                    "ESTADO",
+                    "ENCARGADO"
+                ]
+                if c in actividad.columns
+            ]
+
+            st.dataframe(
+                actividad[columnas_actividad],
+                use_container_width=True,
+                hide_index=True,
+                height=330
+            )
+
+    with derecha:
+        st.subheader("⚙️ Estado operativo")
+
+        st.success(
+            "🏦 **Pagos a Banco**\n\n"
+            "Automatización diaria en preparación para las 8:00 a. m."
+        )
+
+        st.info(
+            "📧 **Campañas de mora**\n\n"
+            "Mora 1, 30, 60 y 90 se crean y programan manualmente por el equipo."
+        )
+
+        if errores_cola:
+            st.warning(
+                f"⚠️ Hay {errores_cola} registros con ERROR o BLOQUEADO en COLA_ENVIO."
+            )
+        else:
+            st.success("✅ Sin errores activos detectados en la cola.")
 
 # ============================================================
 # PAGOS A BANCO
@@ -3379,26 +3606,203 @@ elif menu == "💬 Respuestas":
 
 elif menu == "📧 Campañas":
 
-    st.title(
-        "📧 Campañas"
+    st.markdown(
+        '<div class="titulo">'
+        '📧 Campañas'
+        '</div>',
+        unsafe_allow_html=True
     )
 
-    columnas = [
-        c
-        for c in campanas.columns
-        if not c.startswith(
-            "COLUMNA_"
+    st.markdown(
+        '<div class="subtitulo">'
+        'Crea y programa manualmente campañas de mora. Los recordatorios PaB se gestionan por separado.'
+        '</div>',
+        unsafe_allow_html=True
+    )
+
+    st.info(
+        "ℹ️ **Importante:** las campañas de Mora 1, 30, 60 y 90 son manuales. "
+        "Crear una campaña aquí no envía correos inmediatamente. Se guarda como BORRADOR para revisión."
+    )
+
+    abrir_formulario = st.toggle(
+        "➕ Nueva campaña",
+        value=bool(st.session_state.pop("abrir_nueva_campana", False)),
+        key="toggle_nueva_campana"
+    )
+
+    if abrir_formulario:
+
+        st.markdown("### Configuración de campaña")
+
+        with st.form("form_nueva_campana", clear_on_submit=False):
+
+            f1, f2 = st.columns(2)
+
+            with f1:
+                nombre_campana = st.text_input(
+                    "Nombre de la campaña *",
+                    placeholder="Ej. Mora 30 - Septiembre 11"
+                )
+
+                tipo_campana = st.selectbox(
+                    "Tipo / segmento *",
+                    [
+                        "MORA_1",
+                        "MORA_30",
+                        "MORA_60",
+                        "MORA_90",
+                        "PRUEBA",
+                        "PERSONALIZADA"
+                    ]
+                )
+
+            with f2:
+                fecha_campana = st.date_input(
+                    "Fecha de envío *",
+                    value=HOY,
+                    min_value=HOY
+                )
+
+                hora_campana = st.time_input(
+                    "Hora de envío *",
+                    value=AHORA.replace(
+                        minute=0,
+                        second=0,
+                        microsecond=0
+                    ).time()
+                )
+
+            plantilla_sugerida = PLANTILLA_POR_FILTRO.get(
+                tipo_campana,
+                ""
+            )
+
+            ids_plantillas = []
+            if not plantillas.empty and "ID_PLANTILLA" in plantillas.columns:
+                vista_plantillas = plantillas.copy()
+
+                if "ESTADO" in vista_plantillas.columns:
+                    activas = vista_plantillas[
+                        vista_plantillas["ESTADO"]
+                        .astype(str)
+                        .str.strip()
+                        .str.upper()
+                        == "ACTIVA"
+                    ]
+                    if not activas.empty:
+                        vista_plantillas = activas
+
+                ids_plantillas = sorted(
+                    {
+                        str(x).strip().upper()
+                        for x in vista_plantillas["ID_PLANTILLA"]
+                        if str(x).strip()
+                    }
+                )
+
+            if tipo_campana in PLANTILLA_POR_FILTRO:
+                plantilla_campana = plantilla_sugerida
+                st.text_input(
+                    "Plantilla",
+                    value=plantilla_campana,
+                    disabled=True
+                )
+            else:
+                opciones = ids_plantillas or [""]
+                plantilla_campana = st.selectbox(
+                    "Plantilla *",
+                    opciones
+                )
+
+            comentarios_campana = st.text_area(
+                "Comentarios",
+                placeholder="Notas internas de la campaña...",
+                height=90
+            )
+
+            st.caption(
+                "La campaña quedará como BORRADOR. En el siguiente paso del proyecto "
+                "agregaremos la preparación de destinatarios y la confirmación final de envío."
+            )
+
+            guardar_campana = st.form_submit_button(
+                "💾 Crear campaña en borrador",
+                use_container_width=True,
+                type="primary"
+            )
+
+        if guardar_campana:
+
+            errores_form = []
+
+            if not nombre_campana.strip():
+                errores_form.append("Debes escribir un nombre para la campaña.")
+
+            if not str(plantilla_campana).strip():
+                errores_form.append("Debes seleccionar una plantilla.")
+
+            fecha_hora = datetime.combine(
+                fecha_campana,
+                hora_campana
+            ).replace(tzinfo=TZ)
+
+            if fecha_hora < datetime.now(TZ) - timedelta(minutes=1):
+                errores_form.append("La fecha y hora no pueden estar en el pasado.")
+
+            if errores_form:
+                for error in errores_form:
+                    st.error("❌ " + error)
+            else:
+                try:
+                    nuevo_id = crear_campana_manual(
+                        nombre_campana=nombre_campana,
+                        filtro=tipo_campana,
+                        plantilla=plantilla_campana,
+                        fecha_envio=fecha_campana,
+                        hora_envio=hora_campana,
+                        comentarios=comentarios_campana
+                    )
+
+                    st.success(
+                        f"✅ Campaña creada correctamente como BORRADOR. ID: {nuevo_id}"
+                    )
+                    st.rerun()
+
+                except Exception as e:
+                    st.error(f"❌ No pude crear la campaña: {e}")
+
+    st.markdown("---")
+
+    st.subheader("📋 Campañas registradas")
+
+    if campanas.empty:
+        st.info("Todavía no hay campañas registradas.")
+    else:
+        columnas = [
+            c
+            for c in campanas.columns
+            if not c.startswith("COLUMNA_")
+        ]
+
+        vista_campanas = campanas.copy()
+
+        if "FECHA_CREACIÓN" in vista_campanas.columns:
+            vista_campanas["_ORDEN"] = convertir_fechas(
+                vista_campanas["FECHA_CREACIÓN"]
+            )
+            vista_campanas = vista_campanas.sort_values(
+                "_ORDEN",
+                ascending=False,
+                na_position="last"
+            ).drop(columns=["_ORDEN"])
+
+        st.dataframe(
+            vista_campanas[columnas],
+            use_container_width=True,
+            hide_index=True,
+            height=430
         )
-    ]
-
-    st.dataframe(
-        campanas[
-            columnas
-        ],
-        use_container_width=True,
-        hide_index=True
-    )
-
 
 # ============================================================
 # PENDIENTES
