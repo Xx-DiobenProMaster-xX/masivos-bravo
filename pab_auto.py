@@ -37,7 +37,7 @@ INFO_CLIENTES_V2 = [
     ". Hoja Info_Clientes_V2",
 ]
 
-ESTADO_NUEVO = "BORRADOR"
+ESTADO_NUEVO = "PENDIENTE"
 
 # Todos los PaB quedan asignados a Camila
 ENCARGADO_PAB = "Camila"
@@ -725,7 +725,7 @@ def asegurar_campana(
             ),
 
         "ESTADO":
-            "BORRADOR",
+            "EN PROCESO",
 
         "TOTAL_CLIENTES":
             cantidad,
@@ -734,7 +734,7 @@ def asegurar_campana(
             0,
 
         "PENDIENTES":
-            0,
+            cantidad,
 
         "ERRORES":
             0,
