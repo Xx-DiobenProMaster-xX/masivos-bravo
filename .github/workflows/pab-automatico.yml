@@ -1,0 +1,27 @@
+name: Probar automatización PaB
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probar-pab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      MI_JSON: ${{ secrets.MI_JSON }}
+
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Simular recordatorios PaB
+        run: python pab_auto.py
