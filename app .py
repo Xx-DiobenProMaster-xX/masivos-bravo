@@ -1578,6 +1578,331 @@ def agregar_recordatorio_pab_a_cola(
 
 
 # ============================================================
+# CAMPAÑAS MANUALES / PREPARACIÓN SEGURA
+# ============================================================
+
+MAPA_PLANTILLAS_MORA = {
+    "MORA_1": "T001",
+    "MORA_30": "T030",
+    "MORA_60": "T060",
+    "MORA_90": "T090",
+}
+
+TIPOS_CAMPANA_MANUAL = [
+    "MORA_1",
+    "MORA_30",
+    "MORA_60",
+    "MORA_90",
+    "PRUEBA",
+    "PERSONALIZADA",
+]
+
+
+def obtener_ids_plantillas_activas():
+    if plantillas.empty or "ID_PLANTILLA" not in plantillas.columns:
+        return []
+
+    vista = plantillas.copy()
+    if "ESTADO" in vista.columns:
+        activas = vista[
+            vista["ESTADO"].astype(str).str.strip().str.upper() == "ACTIVA"
+        ]
+        if not activas.empty:
+            vista = activas
+
+    return sorted({
+        str(x).strip()
+        for x in vista["ID_PLANTILLA"].tolist()
+        if str(x).strip()
+    })
+
+
+def obtener_plantilla_generica(id_plantilla):
+    if plantillas.empty or "ID_PLANTILLA" not in plantillas.columns:
+        return None
+
+    candidatos = plantillas[
+        plantillas["ID_PLANTILLA"].astype(str).str.strip().str.upper()
+        == str(id_plantilla).strip().upper()
+    ].copy()
+
+    if candidatos.empty:
+        return None
+
+    if "ESTADO" in candidatos.columns:
+        activas = candidatos[
+            candidatos["ESTADO"].astype(str).str.strip().str.upper() == "ACTIVA"
+        ]
+        if not activas.empty:
+            candidatos = activas
+
+    return candidatos.iloc[0]
+
+
+def reemplazar_variables_genericas(texto, fila):
+    texto = str(texto or "")
+    reemplazos = {
+        "{{NOMBRE}}": str(fila.get("NOMBRE", "")).strip(),
+        "{{REFERENCIA}}": str(fila.get("REFERENCIA", "")).strip(),
+        "{{EMAIL}}": str(fila.get("EMAIL", "")).strip(),
+        "{{MORA}}": str(fila.get("MORA", "")).strip(),
+        "{{ENCARGADO}}": str(fila.get("ENCARGADO", "")).strip(),
+        "{{SALDO}}": moneda(numero(fila.get("SALDO", 0))),
+    }
+    for variable, valor in reemplazos.items():
+        texto = texto.replace(variable, str(valor))
+    return texto
+
+
+def crear_campana_manual(nombre, tipo, id_plantilla, fecha_envio, hora_envio, comentarios=""):
+    nombre = str(nombre or "").strip()
+    tipo = str(tipo or "").strip().upper()
+    id_plantilla = str(id_plantilla or "").strip()
+
+    if not nombre:
+        raise ValueError("Escribe un nombre para la campaña.")
+    if tipo not in TIPOS_CAMPANA_MANUAL:
+        raise ValueError("Tipo de campaña no válido.")
+    if not id_plantilla:
+        raise ValueError("La campaña debe tener una plantilla.")
+    if obtener_plantilla_generica(id_plantilla) is None:
+        raise ValueError(f"No encontré la plantilla {id_plantilla} en PLANTILLAS.")
+
+    archivo = obtener_archivo()
+    hoja = archivo.worksheet("CAMPAÑAS")
+    encabezados = obtener_encabezados_hoja(hoja)
+    if "ID_CAMPAÑA" not in encabezados:
+        raise ValueError("CAMPAÑAS no tiene la columna ID_CAMPAÑA.")
+
+    ahora = datetime.now(TZ)
+    base_id = f"MAN-{ahora.strftime('%Y%m%d-%H%M%S')}"
+    id_campana = base_id
+
+    existentes = set()
+    valores = hoja.get_all_values()
+    if len(valores) > 1:
+        i_id = encabezados.index("ID_CAMPAÑA")
+        existentes = {
+            str(f[i_id]).strip()
+            for f in valores[1:]
+            if len(f) > i_id and str(f[i_id]).strip()
+        }
+    n = 2
+    while id_campana in existentes:
+        id_campana = f"{base_id}-{n}"
+        n += 1
+
+    datos = {
+        "ID_CAMPAÑA": id_campana,
+        "NOMBRE_CAMPAÑA": nombre,
+        "PLANTILLA": id_plantilla,
+        "FILTRO": tipo,
+        "FECHA_ENVIO": fecha_envio.strftime("%d/%m/%Y"),
+        "HORA_ENVIO": hora_envio.strftime("%H:%M"),
+        "ESTADO": "BORRADOR",
+        "TOTAL_CLIENTES": 0,
+        "ENVIADOS": 0,
+        "PENDIENTES": 0,
+        "ERRORES": 0,
+        "FECHA_CREACIÓN": ahora.strftime("%d/%m/%Y %H:%M:%S"),
+        "COMENTARIOS": comentarios,
+    }
+    hoja.append_row(
+        construir_fila_por_encabezados(encabezados, datos),
+        value_input_option="USER_ENTERED"
+    )
+    st.cache_data.clear()
+    return id_campana
+
+
+def fila_campana_por_id(id_campana):
+    if campanas.empty or "ID_CAMPAÑA" not in campanas.columns:
+        return None
+    candidatos = campanas[
+        campanas["ID_CAMPAÑA"].astype(str).str.strip() == str(id_campana).strip()
+    ]
+    if candidatos.empty:
+        return None
+    return candidatos.iloc[0]
+
+
+def referencias_excluidas_normalizadas():
+    return {
+        normalizar_referencia(x)
+        for x in obtener_referencias_excluidas()
+        if normalizar_referencia(x)
+    }
+
+
+def preparar_clientes_campana(fila_campana):
+    """Devuelve candidatos elegibles. No escribe ni envía nada."""
+    if fila_campana is None:
+        return pd.DataFrame(), {"total_base": 0, "excluidos": 0, "mora_180": 0, "sin_email": 0, "duplicados": 0}
+
+    tipo = str(fila_campana.get("FILTRO", "")).strip().upper()
+    id_plantilla = str(fila_campana.get("PLANTILLA", "")).strip()
+
+    base = clientes.copy()
+    for col in ["REFERENCIA", "NOMBRE", "EMAIL", "SALDO", "MORA", "ENCARGADO"]:
+        if col not in base.columns:
+            base[col] = ""
+
+    total_base = len(base)
+
+    # Segmentación de mora: las campañas de mora solo toman su mora exacta.
+    if tipo in MAPA_PLANTILLAS_MORA:
+        objetivo = normalizar(tipo).replace("_", " ")
+        base = base[
+            base["MORA"].apply(lambda x: normalizar(x).replace("_", " ") == objetivo)
+        ].copy()
+    elif tipo == "PRUEBA":
+        # PRUEBA no selecciona automáticamente clientes reales.
+        # Se deja vacía para evitar envíos accidentales.
+        base = base.iloc[0:0].copy()
+    elif tipo == "PERSONALIZADA":
+        # La selección personalizada se hará en la vista previa mediante búsqueda.
+        pass
+
+    base["_REF"] = base["REFERENCIA"].apply(normalizar_referencia)
+    base = base[base["_REF"] != ""].copy()
+
+    duplicados = int(base.duplicated(subset=["_REF"], keep="first").sum())
+    base = base.drop_duplicates(subset=["_REF"], keep="first").copy()
+
+    mask_180 = base["MORA"].apply(es_mora_180)
+    n_mora_180 = int(mask_180.sum())
+    base = base[~mask_180].copy()
+
+    excluidas = referencias_excluidas_normalizadas()
+    mask_excl = base["_REF"].isin(excluidas)
+    n_excl = int(mask_excl.sum())
+    base = base[~mask_excl].copy()
+
+    mask_sin_email = base["EMAIL"].apply(valor_vacio)
+    n_sin_email = int(mask_sin_email.sum())
+    base = base[~mask_sin_email].copy()
+
+    plantilla = obtener_plantilla_generica(id_plantilla)
+    if plantilla is None:
+        raise ValueError(f"No encontré la plantilla {id_plantilla}.")
+
+    base["ASUNTO_PREVIO"] = base.apply(
+        lambda f: reemplazar_variables_genericas(plantilla.get("ASUNTO", ""), f), axis=1
+    )
+    base["CUERPO_PREVIO"] = base.apply(
+        lambda f: reemplazar_variables_genericas(plantilla.get("CUERPO", ""), f), axis=1
+    )
+
+    return base, {
+        "total_base": total_base,
+        "elegibles": len(base),
+        "excluidos": n_excl,
+        "mora_180": n_mora_180,
+        "sin_email": n_sin_email,
+        "duplicados": duplicados,
+    }
+
+
+def ids_envio_existentes():
+    if cola.empty or "ID_ENVIO" not in cola.columns:
+        return set()
+    return {
+        str(x).strip()
+        for x in cola["ID_ENVIO"].tolist()
+        if str(x).strip()
+    }
+
+
+def preparar_campana_en_cola(id_campana, df_destinatarios):
+    """Escribe en COLA_ENVIO como BORRADOR. Nunca envía correos."""
+    if df_destinatarios.empty:
+        raise ValueError("No hay destinatarios elegibles para preparar.")
+
+    fila_camp = fila_campana_por_id(id_campana)
+    if fila_camp is None:
+        raise ValueError("No encontré la campaña seleccionada.")
+
+    estado = str(fila_camp.get("ESTADO", "")).strip().upper()
+    if estado not in {"BORRADOR", "PREPARADA"}:
+        raise ValueError(f"La campaña está en estado {estado} y no puede prepararse.")
+
+    archivo = obtener_archivo()
+    hoja_cola = archivo.worksheet("COLA_ENVIO")
+    encabezados_cola = obtener_encabezados_hoja(hoja_cola)
+    existentes = ids_envio_existentes()
+
+    fecha_txt = str(fila_camp.get("FECHA_ENVIO", "")).strip()
+    hora_txt = str(fila_camp.get("HORA_ENVIO", "")).strip()
+    fecha_prog = f"{fecha_txt} {hora_txt}".strip()
+    id_plantilla = str(fila_camp.get("PLANTILLA", "")).strip()
+
+    filas = []
+    agregados = 0
+    omitidos = 0
+
+    for _, f in df_destinatarios.iterrows():
+        ref = normalizar_referencia(f.get("REFERENCIA", ""))
+        if not ref:
+            omitidos += 1
+            continue
+
+        id_envio = f"ENV-{id_campana}-{ref}"
+        if id_envio in existentes:
+            omitidos += 1
+            continue
+
+        datos = {
+            "ID_ENVIO": id_envio,
+            "ID_CAMPAÑA": id_campana,
+            "REFERENCIA": ref,
+            "NOMBRE": str(f.get("NOMBRE", "")).strip(),
+            "EMAIL": str(f.get("EMAIL", "")).strip(),
+            "PLANTILLA": id_plantilla,
+            "ASUNTO": str(f.get("ASUNTO_PREVIO", "")).strip(),
+            "ESTADO": "BORRADOR",
+            "FECHA_PROG": fecha_prog,
+            "FECHA_ENVIO": "",
+            "INTENTOS": 0,
+            "ERROR": "",
+            "ID_MENSAJE": "",
+            "CUERPO": str(f.get("CUERPO_PREVIO", "")).strip(),
+            "ENCARGADO": str(f.get("ENCARGADO", "")).strip(),
+        }
+        filas.append(construir_fila_por_encabezados(encabezados_cola, datos))
+        existentes.add(id_envio)
+        agregados += 1
+
+    if filas:
+        hoja_cola.append_rows(filas, value_input_option="USER_ENTERED")
+
+    # Actualizar campaña: sigue sin ser enviable.
+    hoja_camp = archivo.worksheet("CAMPAÑAS")
+    valores_camp = hoja_camp.get_all_values()
+    enc_camp = [str(x).strip() for x in valores_camp[0]]
+    i_id = enc_camp.index("ID_CAMPAÑA")
+    fila_obj = None
+    for n, f in enumerate(valores_camp[1:], start=2):
+        if len(f) > i_id and str(f[i_id]).strip() == id_campana:
+            fila_obj = n
+            break
+
+    if fila_obj:
+        cambios = {
+            "ESTADO": "PREPARADA",
+            "TOTAL_CLIENTES": agregados,
+            "PENDIENTES": agregados,
+            "ENVIADOS": 0,
+            "ERRORES": 0,
+        }
+        for enc, val in cambios.items():
+            if enc in enc_camp:
+                hoja_camp.update_cell(fila_obj, enc_camp.index(enc) + 1, val)
+
+    st.cache_data.clear()
+    return agregados, omitidos
+
+
+# ============================================================
 # ESCRITURA RESPUESTAS
 # ============================================================
 
@@ -1927,7 +2252,7 @@ total_recordatorios_pendientes = (
 with st.sidebar:
 
     st.markdown(
-        "## BRAVO S.A.S."
+        "## Masivos Correos"
     )
 
     st.caption(
@@ -3327,25 +3652,239 @@ elif menu == "💬 Respuestas":
 
 elif menu == "📧 Campañas":
 
-    st.title(
-        "📧 Campañas"
+    st.markdown(
+        '<div class="titulo">📧 Campañas</div>',
+        unsafe_allow_html=True
+    )
+    st.markdown(
+        '<div class="subtitulo">Crea, revisa y prepara campañas manuales sin enviar correos automáticamente</div>',
+        unsafe_allow_html=True
     )
 
-    columnas = [
-        c
-        for c in campanas.columns
-        if not c.startswith(
-            "COLUMNA_"
-        )
-    ]
-
-    st.dataframe(
-        campanas[
-            columnas
-        ],
-        use_container_width=True,
-        hide_index=True
+    st.info(
+        "🔒 Modo seguro: crear o preparar una campaña NO envía correos. "
+        "Los registros preparados quedan en estado BORRADOR."
     )
+
+    tab_nueva, tab_preparar, tab_historial = st.tabs([
+        "➕ Nueva campaña",
+        "👥 Preparar destinatarios",
+        "📋 Campañas creadas",
+    ])
+
+    with tab_nueva:
+        st.subheader("Crear campaña manual")
+
+        with st.form("form_nueva_campana", clear_on_submit=False):
+            c1, c2 = st.columns(2)
+
+            with c1:
+                nombre_campana = st.text_input(
+                    "Nombre de la campaña",
+                    placeholder="Ej. Seguimiento Mora 30 - septiembre"
+                )
+                tipo_campana = st.selectbox(
+                    "Tipo / segmento",
+                    TIPOS_CAMPANA_MANUAL
+                )
+
+            with c2:
+                fecha_campana = st.date_input(
+                    "Fecha programada",
+                    value=HOY
+                )
+                hora_campana = st.time_input(
+                    "Hora programada",
+                    value=AHORA.replace(second=0, microsecond=0).time()
+                )
+
+            ids_plantillas = obtener_ids_plantillas_activas()
+            plantilla_forzada = MAPA_PLANTILLAS_MORA.get(tipo_campana)
+
+            if plantilla_forzada:
+                st.text_input(
+                    "Plantilla",
+                    value=plantilla_forzada,
+                    disabled=True
+                )
+                plantilla_campana = plantilla_forzada
+            else:
+                plantilla_campana = st.selectbox(
+                    "Plantilla",
+                    ids_plantillas if ids_plantillas else [""],
+                    help="Para PRUEBA y PERSONALIZADA puedes escoger la plantilla."
+                )
+
+            comentarios_campana = st.text_area(
+                "Comentarios",
+                placeholder="Opcional",
+                height=90
+            )
+
+            crear = st.form_submit_button(
+                "💾 Crear como BORRADOR",
+                type="primary",
+                use_container_width=True
+            )
+
+        if crear:
+            try:
+                id_nueva = crear_campana_manual(
+                    nombre_campana,
+                    tipo_campana,
+                    plantilla_campana,
+                    fecha_campana,
+                    hora_campana,
+                    comentarios_campana
+                )
+                st.success(
+                    f"✅ Campaña {id_nueva} creada como BORRADOR. No se envió ningún correo."
+                )
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ No se pudo crear la campaña: {e}")
+
+    with tab_preparar:
+        st.subheader("Revisar y preparar destinatarios")
+
+        if campanas.empty or "ID_CAMPAÑA" not in campanas.columns:
+            st.info("Todavía no hay campañas disponibles.")
+        else:
+            estados_permitidos = {"BORRADOR", "PREPARADA"}
+            disponibles = campanas[
+                campanas.get("ESTADO", pd.Series("", index=campanas.index))
+                .astype(str).str.strip().str.upper().isin(estados_permitidos)
+            ].copy()
+
+            if disponibles.empty:
+                st.info("No hay campañas en BORRADOR o PREPARADA para revisar.")
+            else:
+                opciones = disponibles["ID_CAMPAÑA"].astype(str).tolist()
+                id_sel = st.selectbox(
+                    "Campaña",
+                    opciones,
+                    format_func=lambda x: (
+                        f"{x} · "
+                        f"{str(disponibles.loc[disponibles['ID_CAMPAÑA'].astype(str) == x, 'NOMBRE_CAMPAÑA'].iloc[0])}"
+                        if "NOMBRE_CAMPAÑA" in disponibles.columns else x
+                    )
+                )
+
+                fila_sel = fila_campana_por_id(id_sel)
+
+                if fila_sel is not None:
+                    d1, d2, d3, d4 = st.columns(4)
+                    d1.metric("Tipo", str(fila_sel.get("FILTRO", "")))
+                    d2.metric("Plantilla", str(fila_sel.get("PLANTILLA", "")))
+                    d3.metric("Fecha", str(fila_sel.get("FECHA_ENVIO", "")))
+                    d4.metric("Estado", str(fila_sel.get("ESTADO", "")))
+
+                    tipo_sel = str(fila_sel.get("FILTRO", "")).strip().upper()
+
+                    if tipo_sel == "PRUEBA":
+                        st.warning(
+                            "PRUEBA no toma clientes automáticamente. "
+                            "La prueba interna la conectaremos cuando habilitemos Gmail."
+                        )
+                    else:
+                        try:
+                            candidatos, resumen = preparar_clientes_campana(fila_sel)
+
+                            # PERSONALIZADA: permitir búsqueda y selección manual segura.
+                            if tipo_sel == "PERSONALIZADA" and not candidatos.empty:
+                                buscar_personalizada = st.text_input(
+                                    "Buscar clientes para esta campaña",
+                                    placeholder="Referencia, nombre o correo...",
+                                    key=f"buscar_personalizada_{id_sel}"
+                                )
+                                if buscar_personalizada.strip():
+                                    t = buscar_personalizada.strip().lower()
+                                    mask = pd.Series(False, index=candidatos.index)
+                                    for c in ["REFERENCIA", "NOMBRE", "EMAIL"]:
+                                        if c in candidatos.columns:
+                                            mask |= candidatos[c].astype(str).str.lower().str.contains(t, regex=False, na=False)
+                                    candidatos = candidatos[mask].copy()
+                                else:
+                                    st.caption(
+                                        "En PERSONALIZADA usa el buscador para reducir la lista antes de preparar."
+                                    )
+
+                            r1, r2, r3, r4, r5 = st.columns(5)
+                            r1.metric("Elegibles", len(candidatos))
+                            r2.metric("Excluir_correo", resumen.get("excluidos", 0))
+                            r3.metric("Mora 180", resumen.get("mora_180", 0))
+                            r4.metric("Sin correo", resumen.get("sin_email", 0))
+                            r5.metric("Duplicados", resumen.get("duplicados", 0))
+
+                            if candidatos.empty:
+                                st.info("No hay destinatarios elegibles con estas reglas.")
+                            else:
+                                mostrar = [
+                                    c for c in [
+                                        "REFERENCIA", "NOMBRE", "EMAIL", "MORA",
+                                        "ENCARGADO", "SALDO", "ASUNTO_PREVIO"
+                                    ] if c in candidatos.columns
+                                ]
+                                st.dataframe(
+                                    candidatos[mostrar].head(500),
+                                    use_container_width=True,
+                                    hide_index=True
+                                )
+
+                                st.caption(
+                                    f"Vista previa: {min(len(candidatos), 500)} de {len(candidatos)} destinatarios."
+                                )
+
+                                if str(fila_sel.get("ESTADO", "")).strip().upper() == "PREPARADA":
+                                    st.success(
+                                        "✅ Esta campaña ya fue preparada. Los correos siguen en BORRADOR."
+                                    )
+                                else:
+                                    confirmar = st.checkbox(
+                                        "Confirmo que revisé los destinatarios. Preparar en COLA_ENVIO como BORRADOR.",
+                                        key=f"confirmar_{id_sel}"
+                                    )
+
+                                    if st.button(
+                                        "📥 Preparar campaña",
+                                        type="primary",
+                                        use_container_width=True,
+                                        disabled=not confirmar,
+                                        key=f"preparar_{id_sel}"
+                                    ):
+                                        try:
+                                            agregados, omitidos = preparar_campana_en_cola(
+                                                id_sel,
+                                                candidatos
+                                            )
+                                            st.success(
+                                                f"✅ Preparada: {agregados} destinatarios en BORRADOR. "
+                                                f"Omitidos por duplicado: {omitidos}. No se envió ningún correo."
+                                            )
+                                            st.rerun()
+                                        except Exception as e:
+                                            st.error(f"❌ No se pudo preparar: {e}")
+
+                        except Exception as e:
+                            st.error(f"❌ No pude construir los destinatarios: {e}")
+
+    with tab_historial:
+        st.subheader("Campañas")
+        columnas = [c for c in campanas.columns if not c.startswith("COLUMNA_")]
+        if campanas.empty:
+            st.info("No hay campañas registradas.")
+        else:
+            vista_camp = campanas.copy()
+            if "FECHA_CREACIÓN" in vista_camp.columns:
+                vista_camp["_ORDEN"] = pd.to_datetime(
+                    vista_camp["FECHA_CREACIÓN"], errors="coerce", dayfirst=True
+                )
+                vista_camp = vista_camp.sort_values("_ORDEN", ascending=False, na_position="last")
+            st.dataframe(
+                vista_camp[columnas],
+                use_container_width=True,
+                hide_index=True
+            )
 
 
 # ============================================================
