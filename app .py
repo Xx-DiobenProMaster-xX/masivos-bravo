@@ -2538,23 +2538,62 @@ if menu == "🏠 Inicio":
 
     st.markdown(
         '<div class="subtitulo">'
-        'Gestión de campañas y comunicaciones con clientes'
+        'Gestión de campañas, respuestas y comunicaciones con clientes'
         '</div>',
         unsafe_allow_html=True
     )
 
-    c1, c2, c3, c4 = st.columns(
-        4
-    )
+    # --------------------------------------------------------
+    # KPIs OPERATIVOS DE HOY
+    # --------------------------------------------------------
+
+    enviados_hoy = 0
+    errores_cola = 0
+
+    if not cola.empty:
+        if "ESTADO" in cola.columns:
+            estados_cola = cola["ESTADO"].astype(str).str.strip().str.upper()
+            errores_cola = int(estados_cola.isin(["ERROR", "BLOQUEADO"]).sum())
+        else:
+            estados_cola = pd.Series("", index=cola.index)
+
+        if "FECHA_ENVIO" in cola.columns:
+            fechas_envio = convertir_fechas(cola["FECHA_ENVIO"])
+            enviados_hoy = int(
+                (
+                    (estados_cola == "ENVIADO")
+                    &
+                    (fechas_envio.dt.date == HOY)
+                ).sum()
+            )
+
+    respuestas_hoy = 0
+    if not respuestas.empty and "_FECHA" in respuestas.columns:
+        respuestas_hoy = int(
+            (respuestas["_FECHA"].dt.date == HOY).sum()
+        )
+
+    campanas_activas = 0
+    if not campanas.empty and "ESTADO" in campanas.columns:
+        campanas_activas = int(
+            campanas["ESTADO"]
+            .astype(str)
+            .str.strip()
+            .str.upper()
+            .isin(["BORRADOR", "PROGRAMADA", "PENDIENTE", "EN PROCESO"])
+            .sum()
+        )
+
+    c1, c2, c3, c4 = st.columns(4)
 
     c1.metric(
-        "💬 Respuestas",
-        total_respuestas
+        "📨 Correos enviados hoy",
+        enviados_hoy
     )
 
     c2.metric(
-        "🟡 Pendientes",
-        total_pendientes
+        "💬 Respuestas nuevas hoy",
+        respuestas_hoy
     )
 
     c3.metric(
@@ -2569,27 +2608,123 @@ if menu == "🏠 Inicio":
 
     st.markdown("---")
 
-    p1, p2, p3 = st.columns(
-        3
-    )
+    p1, p2, p3, p4 = st.columns(4)
 
     p1.metric(
-        "PaB próximos 3 días",
+        "📅 PaB próximos 3 días",
         total_pab_3_dias
     )
 
     p2.metric(
-        "Valor PaB hoy",
-        moneda(
-            valor_pab_hoy
-        )
+        "💰 Valor PaB hoy",
+        moneda(valor_pab_hoy)
     )
 
     p3.metric(
-        "Recordatorios pendientes",
+        "⏳ Recordatorios PaB pendientes",
         total_recordatorios_pendientes
     )
 
+    p4.metric(
+        "📧 Campañas abiertas",
+        campanas_activas
+    )
+
+    # --------------------------------------------------------
+    # ACCIONES RÁPIDAS
+    # --------------------------------------------------------
+
+    st.markdown("---")
+    st.subheader("⚡ Acciones rápidas")
+    st.caption("Accede a las funciones que más usa el equipo.")
+
+    a1, a2, a3, a4 = st.columns(4)
+
+    with a1:
+        if st.button(
+            "➕ Nueva campaña",
+            use_container_width=True,
+            type="primary"
+        ):
+            st.session_state["navegar_a"] = "📧 Campañas"
+            st.session_state["abrir_nueva_campana"] = True
+            st.rerun()
+
+    with a2:
+        if st.button(
+            "💬 Ver respuestas",
+            use_container_width=True
+        ):
+            st.session_state["navegar_a"] = "💬 Respuestas"
+            st.rerun()
+
+    with a3:
+        if st.button(
+            "🏦 Ver pagos a banco",
+            use_container_width=True
+        ):
+            st.session_state["navegar_a"] = "🏦 Pagos a Banco"
+            st.rerun()
+
+    with a4:
+        if st.button(
+            "⚠️ Ver pendientes",
+            use_container_width=True
+        ):
+            st.session_state["navegar_a"] = "⚠️ Pendientes"
+            st.rerun()
+
+    st.markdown("---")
+
+    izquierda, derecha = st.columns([1.65, 1])
+
+    with izquierda:
+        st.subheader("🕘 Actividad reciente")
+
+        if cola.empty:
+            st.info("Todavía no hay actividad registrada en COLA_ENVIO.")
+        else:
+            actividad = cola.copy().tail(10).iloc[::-1]
+
+            columnas_actividad = [
+                c
+                for c in [
+                    "FECHA_ENVIO",
+                    "FECHA_PROG",
+                    "REFERENCIA",
+                    "PLANTILLA",
+                    "ESTADO",
+                    "ENCARGADO"
+                ]
+                if c in actividad.columns
+            ]
+
+            st.dataframe(
+                actividad[columnas_actividad],
+                use_container_width=True,
+                hide_index=True,
+                height=330
+            )
+
+    with derecha:
+        st.subheader("⚙️ Estado operativo")
+
+        st.success(
+            "🏦 **Pagos a Banco**\n\n"
+            "Automatización diaria en preparación para las 8:00 a. m."
+        )
+
+        st.info(
+            "📧 **Campañas de mora**\n\n"
+            "Mora 1, 30, 60 y 90 se crean y programan manualmente por el equipo."
+        )
+
+        if errores_cola:
+            st.warning(
+                f"⚠️ Hay {errores_cola} registros con ERROR o BLOQUEADO en COLA_ENVIO."
+            )
+        else:
+            st.success("✅ Sin errores activos detectados en la cola.")
 
 # ============================================================
 # PAGOS A BANCO
