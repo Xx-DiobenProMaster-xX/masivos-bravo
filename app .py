@@ -117,11 +117,13 @@ st.markdown(
 # GOOGLE SHEETS
 # ============================================================
 
+@st.cache_resource(show_spinner=False)
 def obtener_gc():
 
     # --------------------------------------------------------
     # STREAMLIT CLOUD
-    # Usa la cuenta de servicio guardada en Secrets
+    # La autorización se reutiliza entre reruns para no crear
+    # una sesión nueva de Google en cada clic.
     # --------------------------------------------------------
 
     if "MI_JSON" in st.secrets:
@@ -159,8 +161,10 @@ def obtener_gc():
     )
 
 
+@st.cache_resource(show_spinner=False)
 def obtener_archivo():
-
+    # Abrir el spreadsheet también consume una llamada.
+    # Reutilizamos el mismo objeto mientras la app esté viva.
     gc = obtener_gc()
 
     return gc.open_by_key(
@@ -168,7 +172,7 @@ def obtener_archivo():
     )
 
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=600, show_spinner=False)
 def cargar_hoja(nombre):
 
     archivo = obtener_archivo()
@@ -235,6 +239,20 @@ def cargar_hoja(nombre):
     ].copy()
 
     return df
+
+
+def invalidar_hojas(*nombres):
+    """
+    Invalida solamente las hojas modificadas.
+    Evita st.cache_data.clear(), que obligaba a releer TODO Google Sheets.
+    """
+    for nombre in nombres:
+        try:
+            cargar_hoja.clear(nombre)
+        except Exception:
+            # Si la versión de Streamlit no admite clear por argumento,
+            # dejamos expirar el TTL en vez de vaciar todo el caché.
+            pass
 
 
 # ============================================================
@@ -621,7 +639,7 @@ def entero_seguro(valor, default=0):
             return default
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=600, show_spinner=False)
 def cargar_maestro_cartera_berex():
     """
     Construye un diccionario de clientes desde 2. Cartera Berex.
@@ -741,7 +759,7 @@ def cargar_maestro_cartera_berex():
 
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=600, show_spinner=False)
 def cargar_maestro_info_clientes_v2():
     """
     Segunda fuente de respaldo.
@@ -921,7 +939,7 @@ def enriquecer_pab_con_cartera_berex(df_pab):
     )
 
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=600, show_spinner=False)
 def obtener_referencias_excluidas():
 
     try:
@@ -1588,7 +1606,7 @@ def agregar_recordatorio_pab_a_cola(
         id_campana
     )
 
-    st.cache_data.clear()
+    invalidar_hojas("COLA_ENVIO", "PAB_PROXIMOS", "CAMPAÑAS")
 
     return id_envio
 
@@ -1756,7 +1774,7 @@ def crear_campana_manual(
         construir_fila_por_encabezados(encabezados, datos),
         value_input_option="USER_ENTERED"
     )
-    st.cache_data.clear()
+    invalidar_hojas("CAMPAÑAS")
     return id_campana
 
 
@@ -1998,7 +2016,7 @@ def preparar_campana_en_cola(id_campana, df_destinatarios):
             if enc in enc_camp:
                 hoja_camp.update_cell(fila_obj, enc_camp.index(enc) + 1, val)
 
-    st.cache_data.clear()
+    invalidar_hojas("COLA_ENVIO", "CAMPAÑAS")
     return agregados, omitidos
 
 
@@ -2066,7 +2084,7 @@ def programar_campana_segura(id_campana):
         )
 
     _actualizar_campos_campana(id_campana, {"ESTADO": "PROGRAMADA"})
-    st.cache_data.clear()
+    invalidar_hojas("CAMPAÑAS")
     return len(filas_camp)
 
 
@@ -2125,7 +2143,7 @@ def cancelar_preparacion_campana(id_campana):
             "ERRORES": 0,
         }
     )
-    st.cache_data.clear()
+    invalidar_hojas("COLA_ENVIO", "CAMPAÑAS")
     return eliminadas
 
 
@@ -2185,7 +2203,7 @@ def guardar_comentario(
         comentario
     )
 
-    st.cache_data.clear()
+    invalidar_hojas("RESPUESTAS")
 
 
 def marcar_respuesta_gestionada(
@@ -2224,7 +2242,7 @@ def marcar_respuesta_gestionada(
         comentario
     )
 
-    st.cache_data.clear()
+    invalidar_hojas("RESPUESTAS")
 
 
 # ============================================================
