@@ -122,8 +122,7 @@ def obtener_gc():
 
     # --------------------------------------------------------
     # STREAMLIT CLOUD
-    # La autorización se reutiliza entre reruns para no crear
-    # una sesión nueva de Google en cada clic.
+    # Usa la cuenta de servicio guardada en Secrets
     # --------------------------------------------------------
 
     if "MI_JSON" in st.secrets:
@@ -163,8 +162,7 @@ def obtener_gc():
 
 @st.cache_resource(show_spinner=False)
 def obtener_archivo():
-    # Abrir el spreadsheet también consume una llamada.
-    # Reutilizamos el mismo objeto mientras la app esté viva.
+
     gc = obtener_gc()
 
     return gc.open_by_key(
@@ -172,7 +170,7 @@ def obtener_archivo():
     )
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def cargar_hoja(nombre):
 
     archivo = obtener_archivo()
@@ -239,20 +237,6 @@ def cargar_hoja(nombre):
     ].copy()
 
     return df
-
-
-def invalidar_hojas(*nombres):
-    """
-    Invalida solamente las hojas modificadas.
-    Evita st.cache_data.clear(), que obligaba a releer TODO Google Sheets.
-    """
-    for nombre in nombres:
-        try:
-            cargar_hoja.clear(nombre)
-        except Exception:
-            # Si la versión de Streamlit no admite clear por argumento,
-            # dejamos expirar el TTL en vez de vaciar todo el caché.
-            pass
 
 
 # ============================================================
@@ -1606,7 +1590,7 @@ def agregar_recordatorio_pab_a_cola(
         id_campana
     )
 
-    invalidar_hojas("COLA_ENVIO", "PAB_PROXIMOS", "CAMPAÑAS")
+    st.cache_data.clear()
 
     return id_envio
 
@@ -1774,7 +1758,7 @@ def crear_campana_manual(
         construir_fila_por_encabezados(encabezados, datos),
         value_input_option="USER_ENTERED"
     )
-    invalidar_hojas("CAMPAÑAS")
+    st.cache_data.clear()
     return id_campana
 
 
@@ -2016,7 +2000,7 @@ def preparar_campana_en_cola(id_campana, df_destinatarios):
             if enc in enc_camp:
                 hoja_camp.update_cell(fila_obj, enc_camp.index(enc) + 1, val)
 
-    invalidar_hojas("COLA_ENVIO", "CAMPAÑAS")
+    st.cache_data.clear()
     return agregados, omitidos
 
 
@@ -2084,7 +2068,7 @@ def programar_campana_segura(id_campana):
         )
 
     _actualizar_campos_campana(id_campana, {"ESTADO": "PROGRAMADA"})
-    invalidar_hojas("CAMPAÑAS")
+    st.cache_data.clear()
     return len(filas_camp)
 
 
@@ -2143,7 +2127,7 @@ def cancelar_preparacion_campana(id_campana):
             "ERRORES": 0,
         }
     )
-    invalidar_hojas("COLA_ENVIO", "CAMPAÑAS")
+    st.cache_data.clear()
     return eliminadas
 
 
@@ -2203,7 +2187,7 @@ def guardar_comentario(
         comentario
     )
 
-    invalidar_hojas("RESPUESTAS")
+    st.cache_data.clear()
 
 
 def marcar_respuesta_gestionada(
@@ -2242,7 +2226,7 @@ def marcar_respuesta_gestionada(
         comentario
     )
 
-    invalidar_hojas("RESPUESTAS")
+    st.cache_data.clear()
 
 
 # ============================================================
