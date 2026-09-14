@@ -605,6 +605,22 @@ def valor_vacio(valor):
     )
 
 
+def entero_seguro(valor, default=0):
+    """Convierte a entero sin romper la app por vacíos, NaN o texto no numérico."""
+    try:
+        if valor is None:
+            return default
+        texto = str(valor).strip()
+        if not texto or texto.upper() in {"NAN", "NONE", "NULL"}:
+            return default
+        return int(float(texto))
+    except Exception:
+        try:
+            return int(valor)
+        except Exception:
+            return default
+
+
 @st.cache_data(ttl=300)
 def cargar_maestro_cartera_berex():
     """
@@ -1593,6 +1609,7 @@ TIPOS_CAMPANA_MANUAL = [
     "MORA_30",
     "MORA_60",
     "MORA_90",
+    "PERSONALIZADA",
 ]
 
 
@@ -1652,10 +1669,19 @@ def reemplazar_variables_genericas(texto, fila):
     return texto
 
 
-def crear_campana_manual(nombre, tipo, id_plantilla, fecha_envio, hora_envio, comentarios=""):
+def crear_campana_manual(
+    nombre,
+    tipo,
+    id_plantilla,
+    fecha_envio,
+    hora_envio,
+    comentarios="",
+    referencias_personalizadas=""
+):
     nombre = str(nombre or "").strip()
     tipo = str(tipo or "").strip().upper()
     id_plantilla = str(id_plantilla or "").strip()
+    referencias_personalizadas = str(referencias_personalizadas or "").strip()
 
     if not nombre:
         raise ValueError("Escribe un nombre para la campaña.")
@@ -1666,11 +1692,32 @@ def crear_campana_manual(nombre, tipo, id_plantilla, fecha_envio, hora_envio, co
     if obtener_plantilla_generica(id_plantilla) is None:
         raise ValueError(f"No encontré la plantilla {id_plantilla} en PLANTILLAS.")
 
+    referencias_limpias = []
+    if tipo == "PERSONALIZADA":
+        partes = re.split(r"[\n,;\t ]+", referencias_personalizadas)
+        vistas = set()
+        for parte in partes:
+            ref = normalizar_referencia(parte)
+            if ref and ref not in vistas:
+                vistas.add(ref)
+                referencias_limpias.append(ref)
+        if not referencias_limpias:
+            raise ValueError(
+                "En una campaña PERSONALIZADA debes pegar al menos una referencia."
+            )
+
     archivo = obtener_archivo()
     hoja = archivo.worksheet("CAMPAÑAS")
     encabezados = obtener_encabezados_hoja(hoja)
     if "ID_CAMPAÑA" not in encabezados:
         raise ValueError("CAMPAÑAS no tiene la columna ID_CAMPAÑA.")
+
+    # Guardamos las referencias personalizadas en la misma hoja CAMPAÑAS.
+    # Si la columna aún no existe, se crea al final automáticamente.
+    if "REFERENCIAS" not in encabezados:
+        nueva_col = len(encabezados) + 1
+        hoja.update_cell(1, nueva_col, "REFERENCIAS")
+        encabezados = obtener_encabezados_hoja(hoja)
 
     ahora = datetime.now(TZ)
     base_id = f"MAN-{ahora.strftime('%Y%m%d-%H%M%S')}"
@@ -1704,6 +1751,7 @@ def crear_campana_manual(nombre, tipo, id_plantilla, fecha_envio, hora_envio, co
         "ERRORES": 0,
         "FECHA_CREACIÓN": ahora.strftime("%d/%m/%Y %H:%M:%S"),
         "COMENTARIOS": comentarios,
+        "REFERENCIAS": ",".join(referencias_limpias),
     }
     hoja.append_row(
         construir_fila_por_encabezados(encabezados, datos),
@@ -1734,8 +1782,17 @@ def referencias_excluidas_normalizadas():
 
 def preparar_clientes_campana(fila_campana):
     """Devuelve candidatos elegibles. No escribe ni envía nada."""
+    resumen_vacio = {
+        "total_base": 0,
+        "elegibles": 0,
+        "excluidos": 0,
+        "mora_180": 0,
+        "sin_email": 0,
+        "duplicados": 0,
+        "no_encontradas": 0,
+    }
     if fila_campana is None:
-        return pd.DataFrame(), {"total_base": 0, "excluidos": 0, "mora_180": 0, "sin_email": 0, "duplicados": 0}
+        return pd.DataFrame(), resumen_vacio
 
     tipo = str(fila_campana.get("FILTRO", "")).strip().upper()
     id_plantilla = str(fila_campana.get("PLANTILLA", "")).strip()
@@ -1745,32 +1802,59 @@ def preparar_clientes_campana(fila_campana):
         if col not in base.columns:
             base[col] = ""
 
-    total_base = len(base)
-
-    # Segmentación de mora: las campañas de mora solo toman su mora exacta.
-    if tipo in MAPA_PLANTILLAS_MORA:
-        objetivo = normalizar(tipo).replace("_", " ")
-        base = base[
-            base["MORA"].apply(lambda x: normalizar(x).replace("_", " ") == objetivo)
-        ].copy()
-
+    # Normalizamos primero para evitar que valores vacíos o formatos de Sheets
+    # rompan la construcción de destinatarios.
     base["_REF"] = base["REFERENCIA"].apply(normalizar_referencia)
     base = base[base["_REF"] != ""].copy()
 
-    duplicados = int(base.duplicated(subset=["_REF"], keep="first").sum())
+    no_encontradas = 0
+    if tipo == "PERSONALIZADA":
+        refs_txt = str(fila_campana.get("REFERENCIAS", "") or "").strip()
+        refs_solicitadas = []
+        vistas = set()
+        for parte in re.split(r"[\n,;\t ]+", refs_txt):
+            ref = normalizar_referencia(parte)
+            if ref and ref not in vistas:
+                vistas.add(ref)
+                refs_solicitadas.append(ref)
+
+        if not refs_solicitadas:
+            raise ValueError(
+                "Esta campaña PERSONALIZADA no tiene referencias guardadas."
+            )
+
+        refs_en_base = set(base["_REF"].tolist())
+        no_encontradas = len([r for r in refs_solicitadas if r not in refs_en_base])
+        base = base[base["_REF"].isin(refs_solicitadas)].copy()
+
+    elif tipo in MAPA_PLANTILLAS_MORA:
+        objetivo = normalizar(tipo).replace("_", " ")
+        base = base[
+            base["MORA"].apply(
+                lambda x: normalizar(x).replace("_", " ") == objetivo
+            )
+        ].copy()
+    else:
+        raise ValueError(f"Tipo de campaña no soportado: {tipo}")
+
+    total_base = len(base)
+
+    duplicados = entero_seguro(
+        base.duplicated(subset=["_REF"], keep="first").sum()
+    )
     base = base.drop_duplicates(subset=["_REF"], keep="first").copy()
 
     mask_180 = base["MORA"].apply(es_mora_180)
-    n_mora_180 = int(mask_180.sum())
+    n_mora_180 = entero_seguro(mask_180.sum())
     base = base[~mask_180].copy()
 
     excluidas = referencias_excluidas_normalizadas()
     mask_excl = base["_REF"].isin(excluidas)
-    n_excl = int(mask_excl.sum())
+    n_excl = entero_seguro(mask_excl.sum())
     base = base[~mask_excl].copy()
 
     mask_sin_email = base["EMAIL"].apply(valor_vacio)
-    n_sin_email = int(mask_sin_email.sum())
+    n_sin_email = entero_seguro(mask_sin_email.sum())
     base = base[~mask_sin_email].copy()
 
     plantilla = obtener_plantilla_generica(id_plantilla)
@@ -1778,10 +1862,12 @@ def preparar_clientes_campana(fila_campana):
         raise ValueError(f"No encontré la plantilla {id_plantilla}.")
 
     base["ASUNTO_PREVIO"] = base.apply(
-        lambda f: reemplazar_variables_genericas(plantilla.get("ASUNTO", ""), f), axis=1
+        lambda f: reemplazar_variables_genericas(plantilla.get("ASUNTO", ""), f),
+        axis=1
     )
     base["CUERPO_PREVIO"] = base.apply(
-        lambda f: reemplazar_variables_genericas(plantilla.get("CUERPO", ""), f), axis=1
+        lambda f: reemplazar_variables_genericas(plantilla.get("CUERPO", ""), f),
+        axis=1
     )
 
     return base, {
@@ -1791,6 +1877,7 @@ def preparar_clientes_campana(fila_campana):
         "mora_180": n_mora_180,
         "sin_email": n_sin_email,
         "duplicados": duplicados,
+        "no_encontradas": no_encontradas,
     }
 
 
@@ -3666,17 +3753,26 @@ elif menu == "📧 Campañas":
     with tab_nueva:
         st.subheader("Crear campaña manual")
 
+        tipo_campana = st.selectbox(
+            "Tipo / segmento",
+            TIPOS_CAMPANA_MANUAL,
+            key="tipo_nueva_campana"
+        )
+
+        es_personalizada = tipo_campana == "PERSONALIZADA"
+        ids_plantillas = obtener_ids_plantillas_activas()
+
         with st.form("form_nueva_campana", clear_on_submit=False):
             c1, c2 = st.columns(2)
 
             with c1:
                 nombre_campana = st.text_input(
                     "Nombre de la campaña",
-                    placeholder="Ej. Seguimiento Mora 30 - septiembre"
-                )
-                tipo_campana = st.selectbox(
-                    "Tipo / segmento",
-                    TIPOS_CAMPANA_MANUAL
+                    placeholder=(
+                        "Ej. Seguimiento personalizado - septiembre"
+                        if es_personalizada
+                        else "Ej. Seguimiento Mora 30 - septiembre"
+                    )
                 )
 
             with c2:
@@ -3689,13 +3785,35 @@ elif menu == "📧 Campañas":
                     value=AHORA.replace(second=0, microsecond=0).time()
                 )
 
-            plantilla_campana = MAPA_PLANTILLAS_MORA.get(tipo_campana, "")
-            st.text_input(
-                "Plantilla",
-                value=plantilla_campana,
-                disabled=True,
-                help="La plantilla se asigna automáticamente según la mora."
-            )
+            if es_personalizada:
+                if ids_plantillas:
+                    plantilla_campana = st.selectbox(
+                        "Plantilla",
+                        ids_plantillas,
+                        help="Elige la plantilla que se usará para esta campaña personalizada."
+                    )
+                else:
+                    plantilla_campana = ""
+                    st.error("No encontré plantillas activas en PLANTILLAS.")
+
+                referencias_personalizadas = st.text_area(
+                    "Referencias de clientes",
+                    placeholder=(
+                        "Pega una referencia por línea. También puedes separarlas por coma.\n"
+                        "Ejemplo:\n3227405997\n3145427821\n3175113385"
+                    ),
+                    height=180,
+                    help="El sistema buscará nombre y correo en CLIENTES y aplicará las exclusiones antes de preparar."
+                )
+            else:
+                plantilla_campana = MAPA_PLANTILLAS_MORA.get(tipo_campana, "")
+                st.text_input(
+                    "Plantilla",
+                    value=plantilla_campana,
+                    disabled=True,
+                    help="La plantilla se asigna automáticamente según la mora."
+                )
+                referencias_personalizadas = ""
 
             comentarios_campana = st.text_area(
                 "Comentarios",
@@ -3717,7 +3835,8 @@ elif menu == "📧 Campañas":
                     plantilla_campana,
                     fecha_campana,
                     hora_campana,
-                    comentarios_campana
+                    comentarios_campana,
+                    referencias_personalizadas
                 )
                 st.success(
                     f"✅ Campaña {id_nueva} creada como BORRADOR. No se envió ningún correo."
@@ -3737,9 +3856,13 @@ elif menu == "📧 Campañas":
             st.info("Todavía no hay campañas disponibles.")
         else:
             estados_permitidos = {"BORRADOR", "PREPARADA"}
+            estados_serie = (
+                campanas["ESTADO"]
+                if "ESTADO" in campanas.columns
+                else pd.Series("", index=campanas.index)
+            )
             disponibles = campanas[
-                campanas.get("ESTADO", pd.Series("", index=campanas.index))
-                .astype(str).str.strip().str.upper().isin(estados_permitidos)
+                estados_serie.astype(str).str.strip().str.upper().isin(estados_permitidos)
             ].copy()
 
             if disponibles.empty:
@@ -3770,12 +3893,21 @@ elif menu == "📧 Campañas":
                     try:
                         candidatos, resumen = preparar_clientes_campana(fila_sel)
 
-                        r1, r2, r3, r4, r5 = st.columns(5)
-                        r1.metric("Elegibles", len(candidatos))
-                        r2.metric("Excluir_correo", resumen.get("excluidos", 0))
-                        r3.metric("Mora 180", resumen.get("mora_180", 0))
-                        r4.metric("Sin correo", resumen.get("sin_email", 0))
-                        r5.metric("Duplicados", resumen.get("duplicados", 0))
+                        if tipo_sel == "PERSONALIZADA":
+                            r1, r2, r3, r4, r5, r6 = st.columns(6)
+                            r1.metric("Elegibles", len(candidatos))
+                            r2.metric("No encontradas", resumen.get("no_encontradas", 0))
+                            r3.metric("Excluir_correo", resumen.get("excluidos", 0))
+                            r4.metric("Mora 180", resumen.get("mora_180", 0))
+                            r5.metric("Sin correo", resumen.get("sin_email", 0))
+                            r6.metric("Duplicados", resumen.get("duplicados", 0))
+                        else:
+                            r1, r2, r3, r4, r5 = st.columns(5)
+                            r1.metric("Elegibles", len(candidatos))
+                            r2.metric("Excluir_correo", resumen.get("excluidos", 0))
+                            r3.metric("Mora 180", resumen.get("mora_180", 0))
+                            r4.metric("Sin correo", resumen.get("sin_email", 0))
+                            r5.metric("Duplicados", resumen.get("duplicados", 0))
 
                         if candidatos.empty:
                             st.info("No hay destinatarios elegibles con estas reglas.")
