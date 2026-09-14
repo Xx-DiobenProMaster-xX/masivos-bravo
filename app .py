@@ -2002,6 +2002,133 @@ def preparar_campana_en_cola(id_campana, df_destinatarios):
     return agregados, omitidos
 
 
+def _buscar_fila_campana_en_sheet(hoja_camp, id_campana):
+    """Devuelve (numero_fila, encabezados) para una campaña."""
+    valores = hoja_camp.get_all_values()
+    if not valores:
+        raise ValueError("La hoja CAMPAÑAS está vacía.")
+    encabezados = [str(x).strip() for x in valores[0]]
+    if "ID_CAMPAÑA" not in encabezados:
+        raise ValueError("CAMPAÑAS no tiene la columna ID_CAMPAÑA.")
+    i_id = encabezados.index("ID_CAMPAÑA")
+    for numero_fila, fila in enumerate(valores[1:], start=2):
+        if len(fila) > i_id and str(fila[i_id]).strip() == str(id_campana).strip():
+            return numero_fila, encabezados
+    raise ValueError("No encontré la campaña seleccionada en CAMPAÑAS.")
+
+
+def _actualizar_campos_campana(id_campana, cambios):
+    archivo = obtener_archivo()
+    hoja_camp = archivo.worksheet("CAMPAÑAS")
+    fila_obj, encabezados = _buscar_fila_campana_en_sheet(hoja_camp, id_campana)
+    for encabezado, valor in cambios.items():
+        if encabezado in encabezados:
+            hoja_camp.update_cell(fila_obj, encabezados.index(encabezado) + 1, valor)
+
+
+def programar_campana_segura(id_campana):
+    """
+    Marca la CAMPAÑA como PROGRAMADA, pero mantiene TODOS sus correos en
+    COLA_ENVIO como BORRADOR. Por diseño, esta función NO habilita envíos.
+    """
+    fila = fila_campana_por_id(id_campana)
+    if fila is None:
+        raise ValueError("No encontré la campaña seleccionada.")
+    estado = str(fila.get("ESTADO", "")).strip().upper()
+    if estado != "PREPARADA":
+        raise ValueError("Solo una campaña PREPARADA puede programarse.")
+
+    # Verificar que existan correos preparados y que ninguno deje BORRADOR.
+    archivo = obtener_archivo()
+    hoja_cola = archivo.worksheet("COLA_ENVIO")
+    valores = hoja_cola.get_all_values()
+    if not valores:
+        raise ValueError("COLA_ENVIO está vacía.")
+    encabezados = [str(x).strip() for x in valores[0]]
+    if "ID_CAMPAÑA" not in encabezados or "ESTADO" not in encabezados:
+        raise ValueError("COLA_ENVIO no tiene ID_CAMPAÑA o ESTADO.")
+    i_camp = encabezados.index("ID_CAMPAÑA")
+    i_estado = encabezados.index("ESTADO")
+    filas_camp = [
+        f for f in valores[1:]
+        if len(f) > i_camp and str(f[i_camp]).strip() == str(id_campana).strip()
+    ]
+    if not filas_camp:
+        raise ValueError("La campaña no tiene correos preparados en COLA_ENVIO.")
+    estados_no_seguros = {
+        str(f[i_estado]).strip().upper()
+        for f in filas_camp if len(f) > i_estado
+    } - {"BORRADOR"}
+    if estados_no_seguros:
+        raise ValueError(
+            "Hay correos de esta campaña fuera de BORRADOR: "
+            + ", ".join(sorted(estados_no_seguros))
+        )
+
+    _actualizar_campos_campana(id_campana, {"ESTADO": "PROGRAMADA"})
+    st.cache_data.clear()
+    return len(filas_camp)
+
+
+def cancelar_preparacion_campana(id_campana):
+    """
+    Elimina de COLA_ENVIO únicamente los BORRADORES de la campaña y devuelve
+    CAMPAÑAS a BORRADOR. Nunca toca filas enviadas o habilitadas.
+    """
+    fila = fila_campana_por_id(id_campana)
+    if fila is None:
+        raise ValueError("No encontré la campaña seleccionada.")
+    estado = str(fila.get("ESTADO", "")).strip().upper()
+    if estado not in {"PREPARADA", "PROGRAMADA"}:
+        raise ValueError("Solo se puede cancelar una campaña PREPARADA o PROGRAMADA.")
+
+    archivo = obtener_archivo()
+    hoja_cola = archivo.worksheet("COLA_ENVIO")
+    valores = hoja_cola.get_all_values()
+    eliminadas = 0
+
+    if valores:
+        encabezados = [str(x).strip() for x in valores[0]]
+        if "ID_CAMPAÑA" not in encabezados or "ESTADO" not in encabezados:
+            raise ValueError("COLA_ENVIO no tiene ID_CAMPAÑA o ESTADO.")
+        i_camp = encabezados.index("ID_CAMPAÑA")
+        i_estado = encabezados.index("ESTADO")
+        filas_borrar = []
+        estados_bloqueantes = set()
+        for numero_fila, f in enumerate(valores[1:], start=2):
+            if len(f) <= i_camp or str(f[i_camp]).strip() != str(id_campana).strip():
+                continue
+            est = str(f[i_estado]).strip().upper() if len(f) > i_estado else ""
+            if est == "BORRADOR":
+                filas_borrar.append(numero_fila)
+            else:
+                estados_bloqueantes.add(est or "VACÍO")
+
+        if estados_bloqueantes:
+            raise ValueError(
+                "No puedo cancelar porque existen correos fuera de BORRADOR: "
+                + ", ".join(sorted(estados_bloqueantes))
+            )
+
+        # Borrar de abajo hacia arriba para no desplazar números de fila.
+        for numero_fila in reversed(filas_borrar):
+            hoja_cola.delete_rows(numero_fila)
+            eliminadas += 1
+
+    _actualizar_campos_campana(
+        id_campana,
+        {
+            "ESTADO": "BORRADOR",
+            "TOTAL_CLIENTES": 0,
+            "PENDIENTES": 0,
+            "ENVIADOS": 0,
+            "ERRORES": 0,
+        }
+    )
+    st.cache_data.clear()
+    return eliminadas
+
+
 # ============================================================
 # ESCRITURA RESPUESTAS
 # ============================================================
@@ -3877,7 +4004,7 @@ elif menu == "📧 Campañas":
         if campanas.empty or "ID_CAMPAÑA" not in campanas.columns:
             st.info("Todavía no hay campañas disponibles.")
         else:
-            estados_permitidos = {"BORRADOR", "PREPARADA"}
+            estados_permitidos = {"BORRADOR", "PREPARADA", "PROGRAMADA"}
             estados_serie = (
                 campanas["ESTADO"]
                 if "ESTADO" in campanas.columns
@@ -3888,7 +4015,7 @@ elif menu == "📧 Campañas":
             ].copy()
 
             if disponibles.empty:
-                st.info("No hay campañas en BORRADOR o PREPARADA para revisar.")
+                st.info("No hay campañas en BORRADOR, PREPARADA o PROGRAMADA para revisar.")
             else:
                 opciones = disponibles["ID_CAMPAÑA"].astype(str).tolist()
                 id_sel = st.selectbox(
@@ -3950,10 +4077,90 @@ elif menu == "📧 Campañas":
                                 f"Vista previa: {min(len(candidatos), 500)} de {len(candidatos)} destinatarios."
                             )
 
-                            if str(fila_sel.get("ESTADO", "")).strip().upper() == "PREPARADA":
-                                st.success(
-                                    "✅ Esta campaña ya fue preparada. Los correos siguen en BORRADOR."
-                                )
+                            estado_actual = str(fila_sel.get("ESTADO", "")).strip().upper()
+
+                            if estado_actual in {"PREPARADA", "PROGRAMADA"}:
+                                if estado_actual == "PREPARADA":
+                                    st.success(
+                                        "✅ Esta campaña ya fue preparada. Los correos siguen en BORRADOR."
+                                    )
+                                    st.markdown("### 🗓️ Programar envío")
+                                    fecha_programada = str(fila_sel.get("FECHA_ENVIO", "")).strip() or "Sin fecha"
+                                    hora_programada = str(fila_sel.get("HORA_ENVIO", "")).strip() or "Sin hora"
+                                    p1, p2, p3 = st.columns(3)
+                                    p1.metric("Destinatarios", len(candidatos))
+                                    p2.metric("Fecha programada", fecha_programada)
+                                    p3.metric("Hora programada", hora_programada)
+                                    st.warning(
+                                        "🔒 Programar ahora SOLO cambia la campaña a PROGRAMADA. "
+                                        "Los correos permanecen en BORRADOR y NO se enviarán."
+                                    )
+                                    confirmar_programacion = st.checkbox(
+                                        "Confirmo fecha, hora, plantilla y destinatarios.",
+                                        key=f"confirmar_programacion_{id_sel}"
+                                    )
+                                    col_prog, col_cancel = st.columns(2)
+                                    with col_prog:
+                                        if st.button(
+                                            "🗓️ Programar campaña (sin enviar)",
+                                            type="primary",
+                                            use_container_width=True,
+                                            disabled=not confirmar_programacion,
+                                            key=f"programar_{id_sel}"
+                                        ):
+                                            try:
+                                                cantidad = programar_campana_segura(id_sel)
+                                                st.success(
+                                                    f"✅ Campaña PROGRAMADA con {cantidad} correos. "
+                                                    "Todos continúan en BORRADOR; no se envió nada."
+                                                )
+                                                st.rerun()
+                                            except Exception as e:
+                                                st.error(f"❌ No se pudo programar: {e}")
+                                    with col_cancel:
+                                        if st.button(
+                                            "↩️ Cancelar preparación",
+                                            use_container_width=True,
+                                            key=f"cancelar_preparacion_{id_sel}"
+                                        ):
+                                            try:
+                                                eliminadas = cancelar_preparacion_campana(id_sel)
+                                                st.success(
+                                                    f"↩️ Campaña devuelta a BORRADOR. "
+                                                    f"Se retiraron {eliminadas} borradores de COLA_ENVIO."
+                                                )
+                                                st.rerun()
+                                            except Exception as e:
+                                                st.error(f"❌ No se pudo cancelar: {e}")
+                                else:
+                                    st.success(
+                                        "🗓️ Campaña PROGRAMADA. Por seguridad, sus correos continúan en BORRADOR y NO se enviarán."
+                                    )
+                                    fecha_programada = str(fila_sel.get("FECHA_ENVIO", "")).strip() or "Sin fecha"
+                                    hora_programada = str(fila_sel.get("HORA_ENVIO", "")).strip() or "Sin hora"
+                                    p1, p2, p3 = st.columns(3)
+                                    p1.metric("Destinatarios", len(candidatos))
+                                    p2.metric("Fecha", fecha_programada)
+                                    p3.metric("Hora", hora_programada)
+                                    confirmar_cancelacion = st.checkbox(
+                                        "Confirmo que quiero cancelar esta programación y volver a BORRADOR.",
+                                        key=f"confirmar_cancelacion_{id_sel}"
+                                    )
+                                    if st.button(
+                                        "↩️ Cancelar programación y volver a BORRADOR",
+                                        use_container_width=True,
+                                        disabled=not confirmar_cancelacion,
+                                        key=f"cancelar_programacion_{id_sel}"
+                                    ):
+                                        try:
+                                            eliminadas = cancelar_preparacion_campana(id_sel)
+                                            st.success(
+                                                f"↩️ Programación cancelada. Se retiraron {eliminadas} "
+                                                "borradores de COLA_ENVIO."
+                                            )
+                                            st.rerun()
+                                        except Exception as e:
+                                            st.error(f"❌ No se pudo cancelar: {e}")
                             else:
                                 confirmar = st.checkbox(
                                     "Confirmo que revisé los destinatarios. Preparar en COLA_ENVIO como BORRADOR.",
