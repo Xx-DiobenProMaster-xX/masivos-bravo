@@ -4328,22 +4328,204 @@ elif menu == "📧 Campañas":
                         st.error(f"❌ No pude construir los destinatarios: {e}")
 
     with tab_historial:
-        st.subheader("Campañas")
-        columnas = [c for c in campanas.columns if not c.startswith("COLUMNA_")]
+        st.subheader("Panel de campañas")
+        st.caption(
+            "Consulta el estado operativo de cada campaña y sus destinatarios. "
+            "Este panel es solo de control: no activa envíos."
+        )
+
         if campanas.empty:
             st.info("No hay campañas registradas.")
         else:
             vista_camp = campanas.copy()
+
+            # Normalizar columnas mínimas sin modificar Google Sheets.
+            for col in [
+                "ID_CAMPAÑA", "NOMBRE_CAMPAÑA", "PLANTILLA", "FILTRO",
+                "FECHA_ENVIO", "HORA_ENVIO", "ESTADO", "TOTAL_CLIENTES",
+                "ENVIADOS", "PENDIENTES", "ERRORES", "FECHA_CREACIÓN"
+            ]:
+                if col not in vista_camp.columns:
+                    vista_camp[col] = ""
+
+            # Conteos reales desde COLA_ENVIO. Así el panel no depende de que
+            # los contadores históricos de CAMPAÑAS estén actualizados.
+            conteos_cola = {}
+            if not cola.empty and "ID_CAMPAÑA" in cola.columns:
+                cola_panel = cola.copy()
+                if "ESTADO" not in cola_panel.columns:
+                    cola_panel["ESTADO"] = ""
+                cola_panel["_ID_CAMP"] = cola_panel["ID_CAMPAÑA"].astype(str).str.strip()
+                cola_panel["_ESTADO"] = cola_panel["ESTADO"].astype(str).str.strip().str.upper()
+
+                for camp_id, grupo in cola_panel.groupby("_ID_CAMP"):
+                    estados = grupo["_ESTADO"]
+                    enviados = int(estados.eq("ENVIADO").sum())
+                    errores = int(estados.eq("ERROR").sum())
+                    borradores = int(estados.eq("BORRADOR").sum())
+                    pendientes = int(estados.isin(["PENDIENTE", "PROGRAMADO", "PROGRAMADA"]).sum())
+                    conteos_cola[camp_id] = {
+                        "DESTINATARIOS": len(grupo),
+                        "ENVIADOS_REAL": enviados,
+                        "PENDIENTES_REAL": pendientes,
+                        "BORRADORES_REAL": borradores,
+                        "ERRORES_REAL": errores,
+                    }
+
+            def _conteo_camp(row, campo, fallback=0):
+                camp_id = str(row.get("ID_CAMPAÑA", "")).strip()
+                if camp_id in conteos_cola:
+                    return conteos_cola[camp_id].get(campo, fallback)
+                try:
+                    valor = row.get("TOTAL_CLIENTES", fallback)
+                    if valor in (None, ""):
+                        return fallback
+                    return int(float(str(valor).replace(",", "")))
+                except Exception:
+                    return fallback
+
+            vista_camp["DESTINATARIOS"] = vista_camp.apply(
+                lambda r: _conteo_camp(r, "DESTINATARIOS", 0), axis=1
+            )
+            vista_camp["ENVIADOS_PANEL"] = vista_camp.apply(
+                lambda r: conteos_cola.get(str(r.get("ID_CAMPAÑA", "")).strip(), {}).get(
+                    "ENVIADOS_REAL", 0
+                ), axis=1
+            )
+            vista_camp["PENDIENTES_PANEL"] = vista_camp.apply(
+                lambda r: conteos_cola.get(str(r.get("ID_CAMPAÑA", "")).strip(), {}).get(
+                    "PENDIENTES_REAL", 0
+                ), axis=1
+            )
+            vista_camp["BORRADORES_PANEL"] = vista_camp.apply(
+                lambda r: conteos_cola.get(str(r.get("ID_CAMPAÑA", "")).strip(), {}).get(
+                    "BORRADORES_REAL", 0
+                ), axis=1
+            )
+            vista_camp["ERRORES_PANEL"] = vista_camp.apply(
+                lambda r: conteos_cola.get(str(r.get("ID_CAMPAÑA", "")).strip(), {}).get(
+                    "ERRORES_REAL", 0
+                ), axis=1
+            )
+
             if "FECHA_CREACIÓN" in vista_camp.columns:
                 vista_camp["_ORDEN"] = pd.to_datetime(
                     vista_camp["FECHA_CREACIÓN"], errors="coerce", dayfirst=True
                 )
-                vista_camp = vista_camp.sort_values("_ORDEN", ascending=False, na_position="last")
+                vista_camp = vista_camp.sort_values(
+                    "_ORDEN", ascending=False, na_position="last"
+                )
+
+            estados_panel = vista_camp["ESTADO"].astype(str).str.strip().str.upper()
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Campañas", len(vista_camp))
+            m2.metric("Borrador", int(estados_panel.eq("BORRADOR").sum()))
+            m3.metric(
+                "Preparadas / programadas",
+                int(estados_panel.isin(["PREPARADA", "PROGRAMADA"]).sum())
+            )
+            m4.metric(
+                "Finalizadas",
+                int(estados_panel.isin(["FINALIZADA", "FINALIZADA CON ERRORES"]).sum())
+            )
+
+            filtro_estado = st.multiselect(
+                "Filtrar por estado",
+                sorted([x for x in estados_panel.unique().tolist() if x]),
+                default=[],
+                key="filtro_estado_panel_campanas"
+            )
+            vista_filtrada = vista_camp.copy()
+            if filtro_estado:
+                vista_filtrada = vista_filtrada[
+                    vista_filtrada["ESTADO"].astype(str).str.strip().str.upper().isin(filtro_estado)
+                ].copy()
+
+            tabla_panel = pd.DataFrame({
+                "CAMPAÑA": vista_filtrada["NOMBRE_CAMPAÑA"].astype(str),
+                "TIPO": vista_filtrada["FILTRO"].astype(str),
+                "PLANTILLA": vista_filtrada["PLANTILLA"].astype(str),
+                "ESTADO": vista_filtrada["ESTADO"].astype(str),
+                "DESTINATARIOS": vista_filtrada["DESTINATARIOS"],
+                "BORRADORES": vista_filtrada["BORRADORES_PANEL"],
+                "ENVIADOS": vista_filtrada["ENVIADOS_PANEL"],
+                "PENDIENTES": vista_filtrada["PENDIENTES_PANEL"],
+                "ERRORES": vista_filtrada["ERRORES_PANEL"],
+                "FECHA": vista_filtrada["FECHA_ENVIO"].astype(str),
+                "HORA": vista_filtrada["HORA_ENVIO"].astype(str),
+            })
+
             st.dataframe(
-                vista_camp[columnas],
+                tabla_panel,
                 use_container_width=True,
                 hide_index=True
             )
+
+            st.markdown("### 🔎 Detalle de campaña")
+            ids_detalle = vista_camp["ID_CAMPAÑA"].astype(str).tolist()
+            if ids_detalle:
+                id_detalle = st.selectbox(
+                    "Selecciona una campaña",
+                    ids_detalle,
+                    format_func=lambda x: (
+                        f"{x} · "
+                        f"{str(vista_camp.loc[vista_camp['ID_CAMPAÑA'].astype(str) == x, 'NOMBRE_CAMPAÑA'].iloc[0])}"
+                    ),
+                    key="detalle_panel_campanas"
+                )
+
+                detalle = vista_camp[
+                    vista_camp["ID_CAMPAÑA"].astype(str) == str(id_detalle)
+                ].iloc[0]
+                estado_detalle = str(detalle.get("ESTADO", "")).strip().upper()
+
+                d1, d2, d3, d4 = st.columns(4)
+                d1.metric("Estado", estado_detalle or "—")
+                d2.metric("Destinatarios", int(detalle.get("DESTINATARIOS", 0) or 0))
+                d3.metric("Enviados", int(detalle.get("ENVIADOS_PANEL", 0) or 0))
+                d4.metric("Errores", int(detalle.get("ERRORES_PANEL", 0) or 0))
+
+                st.write(
+                    f"**Tipo:** {detalle.get('FILTRO', '')}  |  "
+                    f"**Plantilla:** {detalle.get('PLANTILLA', '')}  |  "
+                    f"**Programación:** {detalle.get('FECHA_ENVIO', '')} {detalle.get('HORA_ENVIO', '')}"
+                )
+
+                if not cola.empty and "ID_CAMPAÑA" in cola.columns:
+                    detalle_cola = cola[
+                        cola["ID_CAMPAÑA"].astype(str).str.strip() == str(id_detalle).strip()
+                    ].copy()
+                else:
+                    detalle_cola = pd.DataFrame()
+
+                if detalle_cola.empty:
+                    st.info(
+                        "Esta campaña todavía no tiene registros en COLA_ENVIO. "
+                        "Si está en BORRADOR, puedes prepararla desde la pestaña Revisar y preparar."
+                    )
+                else:
+                    columnas_detalle = [
+                        c for c in [
+                            "REFERENCIA", "NOMBRE", "EMAIL", "PLANTILLA",
+                            "ESTADO", "FECHA_PROG", "FECHA_ENVIO", "INTENTOS", "ERROR"
+                        ] if c in detalle_cola.columns
+                    ]
+                    st.dataframe(
+                        detalle_cola[columnas_detalle],
+                        use_container_width=True,
+                        hide_index=True
+                    )
+
+                if estado_detalle == "BORRADOR":
+                    st.info("➡️ Acción disponible: revisar destinatarios y preparar la campaña.")
+                elif estado_detalle == "PREPARADA":
+                    st.info("➡️ Acción disponible: programar o cancelar la preparación.")
+                elif estado_detalle == "PROGRAMADA":
+                    st.success(
+                        "🗓️ Campaña programada. Por seguridad, los correos siguen en BORRADOR y no se enviarán."
+                    )
+                elif estado_detalle in {"FINALIZADA", "FINALIZADA CON ERRORES"}:
+                    st.success("✅ Campaña cerrada.")
 
 
 # ============================================================
