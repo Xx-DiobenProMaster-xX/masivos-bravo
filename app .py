@@ -4,16 +4,11 @@ import pandas as pd
 import gspread
 import google.auth
 import json
-from google.oauth2.service_account import Credentials as ServiceAccountCredentials
+from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import unicodedata
 import re
-import requests
-from google_auth_oauthlib.flow import Flow
-from google.oauth2.credentials import Credentials as OAuthCredentials
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
 
 # ============================================================
 # CONFIGURACIÓN
@@ -141,7 +136,7 @@ def obtener_gc():
         ]
 
         credentials = (
-            ServiceAccountCredentials
+            Credentials
             .from_service_account_info(
                 info,
                 scopes=scopes
@@ -171,147 +166,6 @@ def obtener_archivo():
     return gc.open_by_key(
         SPREADSHEET_ID
     )
-
-
-# ============================================================
-# GOOGLE CLOUD / OAUTH 2.0 / GMAIL API
-# ============================================================
-
-GOOGLE_OAUTH_SCOPES = [
-    "openid",
-    "https://www.googleapis.com/auth/userinfo.email",
-    "https://www.googleapis.com/auth/userinfo.profile",
-    "https://www.googleapis.com/auth/gmail.send",
-]
-
-
-def obtener_config_google_oauth():
-    """Lee google_oauth desde Streamlit Secrets sin exponer valores."""
-    if "google_oauth" not in st.secrets:
-        return None
-    cfg = st.secrets["google_oauth"]
-    requeridas = ["client_id", "client_secret", "redirect_uri"]
-    faltantes = [c for c in requeridas if not str(cfg.get(c, "")).strip()]
-    if faltantes:
-        raise ValueError("Faltan llaves en google_oauth: " + ", ".join(faltantes))
-    return {
-        "client_id": str(cfg["client_id"]).strip(),
-        "client_secret": str(cfg["client_secret"]).strip(),
-        "redirect_uri": str(cfg["redirect_uri"]).strip(),
-    }
-
-
-def crear_flujo_google_oauth(state=None):
-    cfg = obtener_config_google_oauth()
-    if not cfg:
-        raise RuntimeError("No existe google_oauth en Streamlit Secrets.")
-    client_config = {
-        "web": {
-            "client_id": cfg["client_id"],
-            "client_secret": cfg["client_secret"],
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.googleapis.com/token",
-            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-            "redirect_uris": [cfg["redirect_uri"]],
-        }
-    }
-    flow = Flow.from_client_config(
-        client_config,
-        scopes=GOOGLE_OAUTH_SCOPES,
-        state=state,
-    )
-    flow.redirect_uri = cfg["redirect_uri"]
-    return flow
-
-
-def generar_url_google_oauth():
-    flow = crear_flujo_google_oauth()
-    url, state = flow.authorization_url(
-        access_type="offline",
-        include_granted_scopes="true",
-        prompt="consent",
-    )
-    st.session_state["google_oauth_state"] = state
-    st.session_state["google_oauth_url"] = url
-    return url
-
-
-def guardar_credenciales_oauth(credentials):
-    st.session_state["google_oauth_credentials"] = {
-        "token": credentials.token,
-        "refresh_token": credentials.refresh_token,
-        "token_uri": credentials.token_uri,
-        "client_id": credentials.client_id,
-        "client_secret": credentials.client_secret,
-        "scopes": list(credentials.scopes or GOOGLE_OAUTH_SCOPES),
-    }
-
-
-def obtener_credenciales_oauth():
-    datos = st.session_state.get("google_oauth_credentials")
-    if not datos:
-        return None
-    return OAuthCredentials(
-        token=datos.get("token"),
-        refresh_token=datos.get("refresh_token"),
-        token_uri=datos.get("token_uri", "https://oauth2.googleapis.com/token"),
-        client_id=datos.get("client_id"),
-        client_secret=datos.get("client_secret"),
-        scopes=datos.get("scopes", GOOGLE_OAUTH_SCOPES),
-    )
-
-
-def obtener_usuario_google(credentials=None):
-    credentials = credentials or obtener_credenciales_oauth()
-    if not credentials or not credentials.token:
-        return None
-    try:
-        r = requests.get(
-            "https://openidconnect.googleapis.com/v1/userinfo",
-            headers={"Authorization": f"Bearer {credentials.token}"},
-            timeout=15,
-        )
-        if r.ok:
-            return r.json()
-    except Exception:
-        pass
-    return None
-
-
-def obtener_servicio_gmail():
-    credentials = obtener_credenciales_oauth()
-    if not credentials:
-        raise RuntimeError("Primero conecta una cuenta de Google en Configuración.")
-    return build(
-        "gmail",
-        "v1",
-        credentials=credentials,
-        cache_discovery=False,
-    )
-
-
-def procesar_callback_google_oauth():
-    code = st.query_params.get("code")
-    state_recibido = st.query_params.get("state")
-    if not code:
-        return
-    state_esperado = st.session_state.get("google_oauth_state")
-    if state_esperado and state_recibido != state_esperado:
-        st.error("No se pudo validar la respuesta de Google (state inválido).")
-        return
-    try:
-        flow = crear_flujo_google_oauth(state=state_recibido)
-        flow.fetch_token(code=code)
-        guardar_credenciales_oauth(flow.credentials)
-        st.session_state.pop("google_oauth_url", None)
-        st.query_params.clear()
-        st.rerun()
-    except Exception as e:
-        st.error("No pude completar la conexión con Google Cloud.")
-        st.exception(e)
-
-
-procesar_callback_google_oauth()
 
 
 @st.cache_data(ttl=60)
@@ -952,14 +806,11 @@ def cargar_maestro_info_clientes_v2():
     return maestro
 
 
-def enriquecer_pab_con_cartera_berex(
-    df_pab
-):
+def enriquecer_pab_con_cartera_berex(df_pab):
     """
     Prioridad:
     1. Datos ya existentes en PAB_PROXIMOS
-    2. 2. Cartera Berex
-    3. Info_Clientes_V2
+    2. Info_Clientes_V2
 
     Completa NOMBRE y EMAIL de forma independiente.
     """
@@ -968,13 +819,10 @@ def enriquecer_pab_con_cartera_berex(
         return (
             df_pab.copy(),
             {
-                "nombres_completados_berex": 0,
-                "emails_completados_berex": 0,
                 "nombres_completados_info_v2": 0,
                 "emails_completados_info_v2": 0,
                 "sin_nombre": 0,
                 "sin_email": 0,
-                "error_berex": None,
                 "error_info_v2": None
             }
         )
@@ -991,34 +839,24 @@ def enriquecer_pab_con_cartera_berex(
         return (
             df,
             {
-                "nombres_completados_berex": 0,
-                "emails_completados_berex": 0,
                 "nombres_completados_info_v2": 0,
                 "emails_completados_info_v2": 0,
                 "sin_nombre": len(df),
                 "sin_email": len(df),
-                "error_berex": "PAB_PROXIMOS no tiene REFERENCIA.",
-                "error_info_v2": None
+                "error_info_v2": "PAB_PROXIMOS no tiene REFERENCIA."
             }
         )
 
-    # Fuente 1: 2. Cartera Berex
-    error_berex = None
-    try:
-        maestro_berex = cargar_maestro_cartera_berex()
-    except Exception as e:
-        maestro_berex = {}
-        error_berex = str(e)
-
-    # Fuente 2: Info_Clientes_V2
     error_info_v2 = None
+
     try:
         maestro_info_v2 = cargar_maestro_info_clientes_v2()
     except Exception as e:
         maestro_info_v2 = {}
         error_info_v2 = str(e)
 
-    nb = eb = nv2 = ev2 = 0
+    nombres_completados = 0
+    emails_completados = 0
 
     for idx in df.index:
         referencia = normalizar_referencia(
@@ -1028,38 +866,24 @@ def enriquecer_pab_con_cartera_berex(
         if not referencia:
             continue
 
-        # ---------- 2. Cartera Berex ----------
-        datos = maestro_berex.get(referencia)
+        datos = maestro_info_v2.get(referencia)
 
-        if datos:
-            if valor_vacio(df.at[idx, "NOMBRE"]):
-                nombre = datos.get("NOMBRE", "")
-                if not valor_vacio(nombre):
-                    df.at[idx, "NOMBRE"] = nombre
-                    nb += 1
+        if not datos:
+            continue
 
-            if valor_vacio(df.at[idx, "EMAIL"]):
-                email = datos.get("EMAIL", "")
-                if not valor_vacio(email):
-                    df.at[idx, "EMAIL"] = email
-                    eb += 1
+        if valor_vacio(df.at[idx, "NOMBRE"]):
+            nombre = datos.get("NOMBRE", "")
 
-        # ---------- Info_Clientes_V2 ----------
-        # Solo entra si todavía falta algo.
-        datos_v2 = maestro_info_v2.get(referencia)
+            if not valor_vacio(nombre):
+                df.at[idx, "NOMBRE"] = nombre
+                nombres_completados += 1
 
-        if datos_v2:
-            if valor_vacio(df.at[idx, "NOMBRE"]):
-                nombre = datos_v2.get("NOMBRE", "")
-                if not valor_vacio(nombre):
-                    df.at[idx, "NOMBRE"] = nombre
-                    nv2 += 1
+        if valor_vacio(df.at[idx, "EMAIL"]):
+            email = datos.get("EMAIL", "")
 
-            if valor_vacio(df.at[idx, "EMAIL"]):
-                email = datos_v2.get("EMAIL", "")
-                if not valor_vacio(email):
-                    df.at[idx, "EMAIL"] = email
-                    ev2 += 1
+            if not valor_vacio(email):
+                df.at[idx, "EMAIL"] = email
+                emails_completados += 1
 
     sin_nombre = int(
         df["NOMBRE"].apply(valor_vacio).sum()
@@ -1072,13 +896,10 @@ def enriquecer_pab_con_cartera_berex(
     return (
         df,
         {
-            "nombres_completados_berex": nb,
-            "emails_completados_berex": eb,
-            "nombres_completados_info_v2": nv2,
-            "emails_completados_info_v2": ev2,
+            "nombres_completados_info_v2": nombres_completados,
+            "emails_completados_info_v2": emails_completados,
             "sin_nombre": sin_nombre,
             "sin_email": sin_email,
-            "error_berex": error_berex,
             "error_info_v2": error_info_v2
         }
     )
@@ -1855,90 +1676,6 @@ def marcar_respuesta_gestionada(
 
 
 # ============================================================
-# CAMPAÑAS MANUALES
-# ============================================================
-
-PLANTILLA_POR_FILTRO = {
-    "MORA_1": "T001",
-    "MORA_30": "T030",
-    "MORA_60": "T060",
-    "MORA_90": "T090",
-}
-
-
-def crear_campana_manual(
-    nombre_campana,
-    filtro,
-    plantilla,
-    fecha_envio,
-    hora_envio,
-    comentarios=""
-):
-    """
-    Registra una campaña creada manualmente desde Streamlit.
-
-    Por seguridad se crea como BORRADOR. Esta función NO envía correos
-    ni agrega destinatarios a COLA_ENVIO.
-    """
-
-    archivo = obtener_archivo()
-    hoja = archivo.worksheet("CAMPAÑAS")
-    valores = hoja.get_all_values()
-
-    if not valores:
-        raise ValueError("CAMPAÑAS no tiene encabezados.")
-
-    encabezados = [str(x).strip() for x in valores[0]]
-
-    ahora = datetime.now(TZ)
-    id_campana = "CAM-" + ahora.strftime("%Y%m%d-%H%M%S")
-
-    ids_existentes = set()
-    if "ID_CAMPAÑA" in encabezados:
-        i_id = encabezados.index("ID_CAMPAÑA")
-        ids_existentes = {
-            str(f[i_id]).strip()
-            for f in valores[1:]
-            if len(f) > i_id and str(f[i_id]).strip()
-        }
-
-    consecutivo = 1
-    id_base = id_campana
-    while id_campana in ids_existentes:
-        consecutivo += 1
-        id_campana = f"{id_base}-{consecutivo:02d}"
-
-    datos = {
-        "ID_CAMPAÑA": id_campana,
-        "NOMBRE_CAMPAÑA": nombre_campana.strip(),
-        "PLANTILLA": plantilla.strip().upper(),
-        "FILTRO": filtro.strip().upper(),
-        "FECHA_ENVIO": fecha_envio.strftime("%d/%m/%Y"),
-        "HORA_ENVIO": hora_envio.strftime("%H:%M"),
-        "ESTADO": "BORRADOR",
-        "TOTAL_CLIENTES": 0,
-        "ENVIADOS": 0,
-        "PENDIENTES": 0,
-        "ERRORES": 0,
-        "FECHA_CREACIÓN": ahora.strftime("%d/%m/%Y %H:%M:%S"),
-        "COMENTARIOS": comentarios.strip(),
-    }
-
-    fila_nueva = construir_fila_por_encabezados(
-        encabezados,
-        datos
-    )
-
-    hoja.append_row(
-        fila_nueva,
-        value_input_option="USER_ENTERED"
-    )
-
-    st.cache_data.clear()
-    return id_campana
-
-
-# ============================================================
 # CARGAR DATOS
 # ============================================================
 
@@ -2187,17 +1924,10 @@ total_recordatorios_pendientes = (
 # SIDEBAR
 # ============================================================
 
-if "menu_principal" not in st.session_state:
-    st.session_state["menu_principal"] = "🏠 Inicio"
-
-if "navegar_a" in st.session_state:
-    st.session_state["menu_principal"] = st.session_state.pop("navegar_a")
-
-
 with st.sidebar:
 
     st.markdown(
-        "## Masivos Correos"
+        "## BRAVO S.A.S."
     )
 
     st.caption(
@@ -2218,7 +1948,6 @@ with st.sidebar:
             "🕘 Historial",
             "⚙️ Configuración"
         ],
-        key="menu_principal",
         label_visibility="collapsed"
     )
 
@@ -2255,62 +1984,23 @@ if menu == "🏠 Inicio":
 
     st.markdown(
         '<div class="subtitulo">'
-        'Gestión de campañas, respuestas y comunicaciones con clientes'
+        'Gestión de campañas y comunicaciones con clientes'
         '</div>',
         unsafe_allow_html=True
     )
 
-    # --------------------------------------------------------
-    # KPIs OPERATIVOS DE HOY
-    # --------------------------------------------------------
-
-    enviados_hoy = 0
-    errores_cola = 0
-
-    if not cola.empty:
-        if "ESTADO" in cola.columns:
-            estados_cola = cola["ESTADO"].astype(str).str.strip().str.upper()
-            errores_cola = int(estados_cola.isin(["ERROR", "BLOQUEADO"]).sum())
-        else:
-            estados_cola = pd.Series("", index=cola.index)
-
-        if "FECHA_ENVIO" in cola.columns:
-            fechas_envio = convertir_fechas(cola["FECHA_ENVIO"])
-            enviados_hoy = int(
-                (
-                    (estados_cola == "ENVIADO")
-                    &
-                    (fechas_envio.dt.date == HOY)
-                ).sum()
-            )
-
-    respuestas_hoy = 0
-    if not respuestas.empty and "_FECHA" in respuestas.columns:
-        respuestas_hoy = int(
-            (respuestas["_FECHA"].dt.date == HOY).sum()
-        )
-
-    campanas_activas = 0
-    if not campanas.empty and "ESTADO" in campanas.columns:
-        campanas_activas = int(
-            campanas["ESTADO"]
-            .astype(str)
-            .str.strip()
-            .str.upper()
-            .isin(["BORRADOR", "PROGRAMADA", "PENDIENTE", "EN PROCESO"])
-            .sum()
-        )
-
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3, c4 = st.columns(
+        4
+    )
 
     c1.metric(
-        "📨 Correos enviados hoy",
-        enviados_hoy
+        "💬 Respuestas",
+        total_respuestas
     )
 
     c2.metric(
-        "💬 Respuestas nuevas hoy",
-        respuestas_hoy
+        "🟡 Pendientes",
+        total_pendientes
     )
 
     c3.metric(
@@ -2325,123 +2015,27 @@ if menu == "🏠 Inicio":
 
     st.markdown("---")
 
-    p1, p2, p3, p4 = st.columns(4)
+    p1, p2, p3 = st.columns(
+        3
+    )
 
     p1.metric(
-        "📅 PaB próximos 3 días",
+        "PaB próximos 3 días",
         total_pab_3_dias
     )
 
     p2.metric(
-        "💰 Valor PaB hoy",
-        moneda(valor_pab_hoy)
+        "Valor PaB hoy",
+        moneda(
+            valor_pab_hoy
+        )
     )
 
     p3.metric(
-        "⏳ Recordatorios PaB pendientes",
+        "Recordatorios pendientes",
         total_recordatorios_pendientes
     )
 
-    p4.metric(
-        "📧 Campañas abiertas",
-        campanas_activas
-    )
-
-    # --------------------------------------------------------
-    # ACCIONES RÁPIDAS
-    # --------------------------------------------------------
-
-    st.markdown("---")
-    st.subheader("⚡ Acciones rápidas")
-    st.caption("Accede a las funciones que más usa el equipo.")
-
-    a1, a2, a3, a4 = st.columns(4)
-
-    with a1:
-        if st.button(
-            "➕ Nueva campaña",
-            use_container_width=True,
-            type="primary"
-        ):
-            st.session_state["navegar_a"] = "📧 Campañas"
-            st.session_state["abrir_nueva_campana"] = True
-            st.rerun()
-
-    with a2:
-        if st.button(
-            "💬 Ver respuestas",
-            use_container_width=True
-        ):
-            st.session_state["navegar_a"] = "💬 Respuestas"
-            st.rerun()
-
-    with a3:
-        if st.button(
-            "🏦 Ver pagos a banco",
-            use_container_width=True
-        ):
-            st.session_state["navegar_a"] = "🏦 Pagos a Banco"
-            st.rerun()
-
-    with a4:
-        if st.button(
-            "⚠️ Ver pendientes",
-            use_container_width=True
-        ):
-            st.session_state["navegar_a"] = "⚠️ Pendientes"
-            st.rerun()
-
-    st.markdown("---")
-
-    izquierda, derecha = st.columns([1.65, 1])
-
-    with izquierda:
-        st.subheader("🕘 Actividad reciente")
-
-        if cola.empty:
-            st.info("Todavía no hay actividad registrada en COLA_ENVIO.")
-        else:
-            actividad = cola.copy().tail(10).iloc[::-1]
-
-            columnas_actividad = [
-                c
-                for c in [
-                    "FECHA_ENVIO",
-                    "FECHA_PROG",
-                    "REFERENCIA",
-                    "PLANTILLA",
-                    "ESTADO",
-                    "ENCARGADO"
-                ]
-                if c in actividad.columns
-            ]
-
-            st.dataframe(
-                actividad[columnas_actividad],
-                use_container_width=True,
-                hide_index=True,
-                height=330
-            )
-
-    with derecha:
-        st.subheader("⚙️ Estado operativo")
-
-        st.success(
-            "🏦 **Pagos a Banco**\n\n"
-            "Automatización diaria en preparación para las 8:00 a. m."
-        )
-
-        st.info(
-            "📧 **Campañas de mora**\n\n"
-            "Mora 1, 30, 60 y 90 se crean y programan manualmente por el equipo."
-        )
-
-        if errores_cola:
-            st.warning(
-                f"⚠️ Hay {errores_cola} registros con ERROR o BLOQUEADO en COLA_ENVIO."
-            )
-        else:
-            st.success("✅ Sin errores activos detectados en la cola.")
 
 # ============================================================
 # PAGOS A BANCO
@@ -2463,19 +2057,9 @@ elif menu == "🏦 Pagos a Banco":
         unsafe_allow_html=True
     )
 
-    error_berex = info_enriquecimiento_pab.get(
-        "error_berex"
-    )
-
     error_info_v2 = info_enriquecimiento_pab.get(
         "error_info_v2"
     )
-
-    if error_berex:
-        st.warning(
-            "⚠️ No pude consultar 2. Cartera Berex: "
-            + error_berex
-        )
 
     if error_info_v2:
         st.warning(
@@ -2483,14 +2067,6 @@ elif menu == "🏦 Pagos a Banco":
             + error_info_v2
         )
 
-    nb = info_enriquecimiento_pab.get(
-        "nombres_completados_berex",
-        0
-    )
-    eb = info_enriquecimiento_pab.get(
-        "emails_completados_berex",
-        0
-    )
     nv2 = info_enriquecimiento_pab.get(
         "nombres_completados_info_v2",
         0
@@ -2500,11 +2076,10 @@ elif menu == "🏦 Pagos a Banco":
         0
     )
 
-    if nb or eb or nv2 or ev2:
+    if nv2 or ev2:
         st.success(
-            "✅ Datos completados: "
-            f"2. Cartera Berex → {nb} nombres / {eb} correos · "
-            f"Info_Clientes_V2 → {nv2} nombres / {ev2} correos"
+            "✅ Datos de clientes completados: "
+            f"{nv2} nombres / {ev2} correos"
         )
 
     faltan_nombre = info_enriquecimiento_pab.get(
@@ -2519,7 +2094,7 @@ elif menu == "🏦 Pagos a Banco":
     if faltan_nombre or faltan_email:
         st.caption(
             f"ℹ️ Aún faltan {faltan_nombre} nombres y "
-            f"{faltan_email} correos después de consultar ambas fuentes."
+            f"{faltan_email} correos después de consultar Info_Clientes_V2."
         )
 
     # --------------------------------------------------------
@@ -3752,203 +3327,26 @@ elif menu == "💬 Respuestas":
 
 elif menu == "📧 Campañas":
 
-    st.markdown(
-        '<div class="titulo">'
-        '📧 Campañas'
-        '</div>',
-        unsafe_allow_html=True
+    st.title(
+        "📧 Campañas"
     )
 
-    st.markdown(
-        '<div class="subtitulo">'
-        'Crea y programa manualmente campañas de mora. Los recordatorios PaB se gestionan por separado.'
-        '</div>',
-        unsafe_allow_html=True
-    )
-
-    st.info(
-        "ℹ️ **Importante:** las campañas de Mora 1, 30, 60 y 90 son manuales. "
-        "Crear una campaña aquí no envía correos inmediatamente. Se guarda como BORRADOR para revisión."
-    )
-
-    abrir_formulario = st.toggle(
-        "➕ Nueva campaña",
-        value=bool(st.session_state.pop("abrir_nueva_campana", False)),
-        key="toggle_nueva_campana"
-    )
-
-    if abrir_formulario:
-
-        st.markdown("### Configuración de campaña")
-
-        with st.form("form_nueva_campana", clear_on_submit=False):
-
-            f1, f2 = st.columns(2)
-
-            with f1:
-                nombre_campana = st.text_input(
-                    "Nombre de la campaña *",
-                    placeholder="Ej. Mora 30 - Septiembre 11"
-                )
-
-                tipo_campana = st.selectbox(
-                    "Tipo / segmento *",
-                    [
-                        "MORA_1",
-                        "MORA_30",
-                        "MORA_60",
-                        "MORA_90",
-                        "PRUEBA",
-                        "PERSONALIZADA"
-                    ]
-                )
-
-            with f2:
-                fecha_campana = st.date_input(
-                    "Fecha de envío *",
-                    value=HOY,
-                    min_value=HOY
-                )
-
-                hora_campana = st.time_input(
-                    "Hora de envío *",
-                    value=AHORA.replace(
-                        minute=0,
-                        second=0,
-                        microsecond=0
-                    ).time()
-                )
-
-            plantilla_sugerida = PLANTILLA_POR_FILTRO.get(
-                tipo_campana,
-                ""
-            )
-
-            ids_plantillas = []
-            if not plantillas.empty and "ID_PLANTILLA" in plantillas.columns:
-                vista_plantillas = plantillas.copy()
-
-                if "ESTADO" in vista_plantillas.columns:
-                    activas = vista_plantillas[
-                        vista_plantillas["ESTADO"]
-                        .astype(str)
-                        .str.strip()
-                        .str.upper()
-                        == "ACTIVA"
-                    ]
-                    if not activas.empty:
-                        vista_plantillas = activas
-
-                ids_plantillas = sorted(
-                    {
-                        str(x).strip().upper()
-                        for x in vista_plantillas["ID_PLANTILLA"]
-                        if str(x).strip()
-                    }
-                )
-
-            if tipo_campana in PLANTILLA_POR_FILTRO:
-                plantilla_campana = plantilla_sugerida
-                st.text_input(
-                    "Plantilla",
-                    value=plantilla_campana,
-                    disabled=True
-                )
-            else:
-                opciones = ids_plantillas or [""]
-                plantilla_campana = st.selectbox(
-                    "Plantilla *",
-                    opciones
-                )
-
-            comentarios_campana = st.text_area(
-                "Comentarios",
-                placeholder="Notas internas de la campaña...",
-                height=90
-            )
-
-            st.caption(
-                "La campaña quedará como BORRADOR. En el siguiente paso del proyecto "
-                "agregaremos la preparación de destinatarios y la confirmación final de envío."
-            )
-
-            guardar_campana = st.form_submit_button(
-                "💾 Crear campaña en borrador",
-                use_container_width=True,
-                type="primary"
-            )
-
-        if guardar_campana:
-
-            errores_form = []
-
-            if not nombre_campana.strip():
-                errores_form.append("Debes escribir un nombre para la campaña.")
-
-            if not str(plantilla_campana).strip():
-                errores_form.append("Debes seleccionar una plantilla.")
-
-            fecha_hora = datetime.combine(
-                fecha_campana,
-                hora_campana
-            ).replace(tzinfo=TZ)
-
-            if fecha_hora < datetime.now(TZ) - timedelta(minutes=1):
-                errores_form.append("La fecha y hora no pueden estar en el pasado.")
-
-            if errores_form:
-                for error in errores_form:
-                    st.error("❌ " + error)
-            else:
-                try:
-                    nuevo_id = crear_campana_manual(
-                        nombre_campana=nombre_campana,
-                        filtro=tipo_campana,
-                        plantilla=plantilla_campana,
-                        fecha_envio=fecha_campana,
-                        hora_envio=hora_campana,
-                        comentarios=comentarios_campana
-                    )
-
-                    st.success(
-                        f"✅ Campaña creada correctamente como BORRADOR. ID: {nuevo_id}"
-                    )
-                    st.rerun()
-
-                except Exception as e:
-                    st.error(f"❌ No pude crear la campaña: {e}")
-
-    st.markdown("---")
-
-    st.subheader("📋 Campañas registradas")
-
-    if campanas.empty:
-        st.info("Todavía no hay campañas registradas.")
-    else:
-        columnas = [
-            c
-            for c in campanas.columns
-            if not c.startswith("COLUMNA_")
-        ]
-
-        vista_campanas = campanas.copy()
-
-        if "FECHA_CREACIÓN" in vista_campanas.columns:
-            vista_campanas["_ORDEN"] = convertir_fechas(
-                vista_campanas["FECHA_CREACIÓN"]
-            )
-            vista_campanas = vista_campanas.sort_values(
-                "_ORDEN",
-                ascending=False,
-                na_position="last"
-            ).drop(columns=["_ORDEN"])
-
-        st.dataframe(
-            vista_campanas[columnas],
-            use_container_width=True,
-            hide_index=True,
-            height=430
+    columnas = [
+        c
+        for c in campanas.columns
+        if not c.startswith(
+            "COLUMNA_"
         )
+    ]
+
+    st.dataframe(
+        campanas[
+            columnas
+        ],
+        use_container_width=True,
+        hide_index=True
+    )
+
 
 # ============================================================
 # PENDIENTES
@@ -4020,112 +3418,27 @@ elif menu == "🕘 Historial":
 
 elif menu == "⚙️ Configuración":
 
-    st.markdown(
-        '<div class="titulo">⚙️ Configuración</div>',
-        unsafe_allow_html=True
-    )
-    st.markdown(
-        '<div class="subtitulo">Conexiones, permisos y estado del sistema</div>',
-        unsafe_allow_html=True
+    st.title(
+        "⚙️ Configuración"
     )
 
-    c1, c2 = st.columns(2)
-
-    with c1:
-        st.markdown("### 📊 Google Sheets")
-        st.success("✅ Cuenta de servicio conectada")
-        st.caption(
-            "La lectura y escritura de las hojas sigue usando MI_JSON. "
-            "No depende del OAuth del usuario."
-        )
-        st.write("**Respuestas:** escritura habilitada")
-        st.write("**Pagos a Banco:** lectura y escritura habilitadas")
-        st.write("**Campañas:** lectura y creación habilitadas")
-
-    with c2:
-        st.markdown("### ☁️ Google Cloud / Gmail")
-
-        try:
-            cfg_oauth = obtener_config_google_oauth()
-        except Exception as e:
-            cfg_oauth = None
-            st.error(f"❌ Configuración OAuth incompleta: {e}")
-
-        credenciales_google = obtener_credenciales_oauth()
-
-        if not cfg_oauth:
-            st.warning("⚠️ No encontré google_oauth en Secrets.")
-
-        elif credenciales_google:
-            usuario_google = obtener_usuario_google(credenciales_google)
-            correo_google = usuario_google.get("email", "") if usuario_google else ""
-
-            st.success("✅ Google Cloud OAuth conectado")
-            if correo_google:
-                st.write(f"**Cuenta conectada:** {correo_google}")
-
-            st.write("**Gmail API:** permiso de envío concedido")
-            st.caption(
-                "Scope activo: gmail.send. Este permiso sirve para enviar; "
-                "no permite leer el buzón."
-            )
-
-            t1, t2 = st.columns(2)
-            with t1:
-                if st.button("🧪 Probar Gmail API", use_container_width=True):
-                    try:
-                        gmail = obtener_servicio_gmail()
-                        perfil = gmail.users().getProfile(userId="me").execute()
-                        st.success(
-                            "✅ Gmail API respondió correctamente: "
-                            + str(perfil.get("emailAddress", correo_google))
-                        )
-                    except HttpError as e:
-                        st.error(f"Gmail API rechazó la solicitud: {e}")
-                    except Exception as e:
-                        st.error(f"No pude validar Gmail API: {e}")
-
-            with t2:
-                if st.button("🔌 Desconectar Google", use_container_width=True):
-                    st.session_state.pop("google_oauth_credentials", None)
-                    st.session_state.pop("google_oauth_state", None)
-                    st.session_state.pop("google_oauth_url", None)
-                    st.rerun()
-
-        else:
-            st.info(
-                "Conecta una cuenta de Google para habilitar Gmail API "
-                "desde Masivos Correos."
-            )
-            if cfg_oauth:
-                if "google_oauth_url" not in st.session_state:
-                    try:
-                        generar_url_google_oauth()
-                    except Exception as e:
-                        st.error(f"No pude iniciar OAuth: {e}")
-
-                url_oauth = st.session_state.get("google_oauth_url")
-                if url_oauth:
-                    st.link_button(
-                        "🔐 Conectar con Google",
-                        url_oauth,
-                        use_container_width=True
-                    )
-                st.caption(
-                    "Google volverá al redirect_uri configurado después "
-                    "de aprobar los permisos."
-                )
-
-    st.markdown("---")
-    st.markdown("### 🔐 Permisos configurados")
-    st.code(
-        "Google Sheets / Drive → MI_JSON (cuenta de servicio)\n"
-        "Google OAuth → identidad + gmail.send\n"
-        "Zona horaria → America/Bogota",
-        language=None
+    st.success(
+        "✅ Google Sheets conectado"
     )
-    st.warning(
-        "El OAuth de esta pantalla vive solo durante la sesión de Streamlit. "
-        "Para el envío automático de las 8:00 a. m. desde GitHub Actions, "
-        "el refresh token debe guardarse como GitHub Secret, nunca en app.py."
+
+    st.write(
+        "**Respuestas:** escritura habilitada"
+    )
+
+    st.write(
+        "**Pagos a Banco:** vista previa + agregar a COLA_ENVIO"
+    )
+
+    st.write(
+        "**Datos PaB:** completa NOMBRE y EMAIL desde "
+        "2. Cartera Berex cuando estén vacíos"
+    )
+
+    st.write(
+        "**Zona horaria:** America/Bogota"
     )
