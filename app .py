@@ -4,11 +4,16 @@ import pandas as pd
 import gspread
 import google.auth
 import json
-from google.oauth2.service_account import Credentials
+from google.oauth2.service_account import Credentials as ServiceAccountCredentials
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import unicodedata
 import re
+import requests
+from google_auth_oauthlib.flow import Flow
+from google.oauth2.credentials import Credentials as OAuthCredentials
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 # ============================================================
 # CONFIGURACIÓN
@@ -136,7 +141,7 @@ def obtener_gc():
         ]
 
         credentials = (
-            Credentials
+            ServiceAccountCredentials
             .from_service_account_info(
                 info,
                 scopes=scopes
@@ -166,6 +171,147 @@ def obtener_archivo():
     return gc.open_by_key(
         SPREADSHEET_ID
     )
+
+
+# ============================================================
+# GOOGLE CLOUD / OAUTH 2.0 / GMAIL API
+# ============================================================
+
+GOOGLE_OAUTH_SCOPES = [
+    "openid",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/userinfo.profile",
+    "https://www.googleapis.com/auth/gmail.send",
+]
+
+
+def obtener_config_google_oauth():
+    """Lee google_oauth desde Streamlit Secrets sin exponer valores."""
+    if "google_oauth" not in st.secrets:
+        return None
+    cfg = st.secrets["google_oauth"]
+    requeridas = ["client_id", "client_secret", "redirect_uri"]
+    faltantes = [c for c in requeridas if not str(cfg.get(c, "")).strip()]
+    if faltantes:
+        raise ValueError("Faltan llaves en google_oauth: " + ", ".join(faltantes))
+    return {
+        "client_id": str(cfg["client_id"]).strip(),
+        "client_secret": str(cfg["client_secret"]).strip(),
+        "redirect_uri": str(cfg["redirect_uri"]).strip(),
+    }
+
+
+def crear_flujo_google_oauth(state=None):
+    cfg = obtener_config_google_oauth()
+    if not cfg:
+        raise RuntimeError("No existe google_oauth en Streamlit Secrets.")
+    client_config = {
+        "web": {
+            "client_id": cfg["client_id"],
+            "client_secret": cfg["client_secret"],
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+            "redirect_uris": [cfg["redirect_uri"]],
+        }
+    }
+    flow = Flow.from_client_config(
+        client_config,
+        scopes=GOOGLE_OAUTH_SCOPES,
+        state=state,
+    )
+    flow.redirect_uri = cfg["redirect_uri"]
+    return flow
+
+
+def generar_url_google_oauth():
+    flow = crear_flujo_google_oauth()
+    url, state = flow.authorization_url(
+        access_type="offline",
+        include_granted_scopes="true",
+        prompt="consent",
+    )
+    st.session_state["google_oauth_state"] = state
+    st.session_state["google_oauth_url"] = url
+    return url
+
+
+def guardar_credenciales_oauth(credentials):
+    st.session_state["google_oauth_credentials"] = {
+        "token": credentials.token,
+        "refresh_token": credentials.refresh_token,
+        "token_uri": credentials.token_uri,
+        "client_id": credentials.client_id,
+        "client_secret": credentials.client_secret,
+        "scopes": list(credentials.scopes or GOOGLE_OAUTH_SCOPES),
+    }
+
+
+def obtener_credenciales_oauth():
+    datos = st.session_state.get("google_oauth_credentials")
+    if not datos:
+        return None
+    return OAuthCredentials(
+        token=datos.get("token"),
+        refresh_token=datos.get("refresh_token"),
+        token_uri=datos.get("token_uri", "https://oauth2.googleapis.com/token"),
+        client_id=datos.get("client_id"),
+        client_secret=datos.get("client_secret"),
+        scopes=datos.get("scopes", GOOGLE_OAUTH_SCOPES),
+    )
+
+
+def obtener_usuario_google(credentials=None):
+    credentials = credentials or obtener_credenciales_oauth()
+    if not credentials or not credentials.token:
+        return None
+    try:
+        r = requests.get(
+            "https://openidconnect.googleapis.com/v1/userinfo",
+            headers={"Authorization": f"Bearer {credentials.token}"},
+            timeout=15,
+        )
+        if r.ok:
+            return r.json()
+    except Exception:
+        pass
+    return None
+
+
+def obtener_servicio_gmail():
+    credentials = obtener_credenciales_oauth()
+    if not credentials:
+        raise RuntimeError("Primero conecta una cuenta de Google en Configuración.")
+    return build(
+        "gmail",
+        "v1",
+        credentials=credentials,
+        cache_discovery=False,
+    )
+
+
+def procesar_callback_google_oauth():
+    code = st.query_params.get("code")
+    state_recibido = st.query_params.get("state")
+    if not code:
+        return
+    state_esperado = st.session_state.get("google_oauth_state")
+    if state_esperado and state_recibido != state_esperado:
+        st.error("No se pudo validar la respuesta de Google (state inválido).")
+        return
+    try:
+        flow = crear_flujo_google_oauth(state=state_recibido)
+        flow.fetch_token(code=code)
+        guardar_credenciales_oauth(flow.credentials)
+        st.session_state.pop("google_oauth_url", None)
+        st.query_params.clear()
+        st.rerun()
+    except Exception as e:
+        st.error("No pude completar la conexión con Google Cloud.")
+        st.exception(e)
+
+
+procesar_callback_google_oauth()
 
 
 @st.cache_data(ttl=60)
@@ -3874,27 +4020,112 @@ elif menu == "🕘 Historial":
 
 elif menu == "⚙️ Configuración":
 
-    st.title(
-        "⚙️ Configuración"
+    st.markdown(
+        '<div class="titulo">⚙️ Configuración</div>',
+        unsafe_allow_html=True
+    )
+    st.markdown(
+        '<div class="subtitulo">Conexiones, permisos y estado del sistema</div>',
+        unsafe_allow_html=True
     )
 
-    st.success(
-        "✅ Google Sheets conectado"
-    )
+    c1, c2 = st.columns(2)
 
-    st.write(
-        "**Respuestas:** escritura habilitada"
-    )
+    with c1:
+        st.markdown("### 📊 Google Sheets")
+        st.success("✅ Cuenta de servicio conectada")
+        st.caption(
+            "La lectura y escritura de las hojas sigue usando MI_JSON. "
+            "No depende del OAuth del usuario."
+        )
+        st.write("**Respuestas:** escritura habilitada")
+        st.write("**Pagos a Banco:** lectura y escritura habilitadas")
+        st.write("**Campañas:** lectura y creación habilitadas")
 
-    st.write(
-        "**Pagos a Banco:** vista previa + agregar a COLA_ENVIO"
-    )
+    with c2:
+        st.markdown("### ☁️ Google Cloud / Gmail")
 
-    st.write(
-        "**Datos PaB:** completa NOMBRE y EMAIL desde "
-        "2. Cartera Berex cuando estén vacíos"
-    )
+        try:
+            cfg_oauth = obtener_config_google_oauth()
+        except Exception as e:
+            cfg_oauth = None
+            st.error(f"❌ Configuración OAuth incompleta: {e}")
 
-    st.write(
-        "**Zona horaria:** America/Bogota"
+        credenciales_google = obtener_credenciales_oauth()
+
+        if not cfg_oauth:
+            st.warning("⚠️ No encontré google_oauth en Secrets.")
+
+        elif credenciales_google:
+            usuario_google = obtener_usuario_google(credenciales_google)
+            correo_google = usuario_google.get("email", "") if usuario_google else ""
+
+            st.success("✅ Google Cloud OAuth conectado")
+            if correo_google:
+                st.write(f"**Cuenta conectada:** {correo_google}")
+
+            st.write("**Gmail API:** permiso de envío concedido")
+            st.caption(
+                "Scope activo: gmail.send. Este permiso sirve para enviar; "
+                "no permite leer el buzón."
+            )
+
+            t1, t2 = st.columns(2)
+            with t1:
+                if st.button("🧪 Probar Gmail API", use_container_width=True):
+                    try:
+                        gmail = obtener_servicio_gmail()
+                        perfil = gmail.users().getProfile(userId="me").execute()
+                        st.success(
+                            "✅ Gmail API respondió correctamente: "
+                            + str(perfil.get("emailAddress", correo_google))
+                        )
+                    except HttpError as e:
+                        st.error(f"Gmail API rechazó la solicitud: {e}")
+                    except Exception as e:
+                        st.error(f"No pude validar Gmail API: {e}")
+
+            with t2:
+                if st.button("🔌 Desconectar Google", use_container_width=True):
+                    st.session_state.pop("google_oauth_credentials", None)
+                    st.session_state.pop("google_oauth_state", None)
+                    st.session_state.pop("google_oauth_url", None)
+                    st.rerun()
+
+        else:
+            st.info(
+                "Conecta una cuenta de Google para habilitar Gmail API "
+                "desde Masivos Correos."
+            )
+            if cfg_oauth:
+                if "google_oauth_url" not in st.session_state:
+                    try:
+                        generar_url_google_oauth()
+                    except Exception as e:
+                        st.error(f"No pude iniciar OAuth: {e}")
+
+                url_oauth = st.session_state.get("google_oauth_url")
+                if url_oauth:
+                    st.link_button(
+                        "🔐 Conectar con Google",
+                        url_oauth,
+                        use_container_width=True
+                    )
+                st.caption(
+                    "Google volverá al redirect_uri configurado después "
+                    "de aprobar los permisos."
+                )
+
+    st.markdown("---")
+    st.markdown("### 🔐 Permisos configurados")
+    st.code(
+        "Google Sheets / Drive → MI_JSON (cuenta de servicio)\n"
+        "Google OAuth → identidad + gmail.send\n"
+        "Zona horaria → America/Bogota",
+        language=None
+    )
+    st.warning(
+        "El OAuth de esta pantalla vive solo durante la sesión de Streamlit. "
+        "Para el envío automático de las 8:00 a. m. desde GitHub Actions, "
+        "el refresh token debe guardarse como GitHub Secret, nunca en app.py."
     )
