@@ -1712,12 +1712,9 @@ def crear_campana_manual(
     if "ID_CAMPAÑA" not in encabezados:
         raise ValueError("CAMPAÑAS no tiene la columna ID_CAMPAÑA.")
 
-    # Guardamos las referencias personalizadas en la misma hoja CAMPAÑAS.
-    # Si la columna aún no existe, se crea al final automáticamente.
-    if "REFERENCIAS" not in encabezados:
-        nueva_col = len(encabezados) + 1
-        hoja.update_cell(1, nueva_col, "REFERENCIAS")
-        encabezados = obtener_encabezados_hoja(hoja)
+    # No modificamos encabezados ni estructura de CAMPAÑAS porque la hoja
+    # puede tener rangos protegidos. Las referencias personalizadas se
+    # conservan dentro de COMENTARIOS con una marca interna.
 
     ahora = datetime.now(TZ)
     base_id = f"MAN-{ahora.strftime('%Y%m%d-%H%M%S')}"
@@ -1750,8 +1747,10 @@ def crear_campana_manual(
         "PENDIENTES": 0,
         "ERRORES": 0,
         "FECHA_CREACIÓN": ahora.strftime("%d/%m/%Y %H:%M:%S"),
-        "COMENTARIOS": comentarios,
-        "REFERENCIAS": ",".join(referencias_limpias),
+        "COMENTARIOS": (
+            (comentarios + "\n" if comentarios else "")
+            + (f"[REFS_PERSONALIZADAS:{','.join(referencias_limpias)}]" if tipo == "PERSONALIZADA" else "")
+        ).strip(),
     }
     hoja.append_row(
         construir_fila_por_encabezados(encabezados, datos),
@@ -1798,9 +1797,30 @@ def preparar_clientes_campana(fila_campana):
     id_plantilla = str(fila_campana.get("PLANTILLA", "")).strip()
 
     base = clientes.copy()
-    for col in ["REFERENCIA", "NOMBRE", "EMAIL", "SALDO", "MORA", "ENCARGADO"]:
-        if col not in base.columns:
-            base[col] = ""
+
+    # CLIENTES conserva los encabezados tal como están escritos en Sheets
+    # (por ejemplo: Referencia, Nombre, Email, Mora). Pandas distingue
+    # mayúsculas/minúsculas, por eso aquí los convertimos a nombres canónicos
+    # sin exigir cambios en Google Sheets.
+    def _clave_columna(nombre):
+        texto = unicodedata.normalize("NFKD", str(nombre or ""))
+        texto = "".join(c for c in texto if not unicodedata.combining(c))
+        return re.sub(r"[^A-Z0-9]+", "_", texto.upper()).strip("_")
+
+    aliases = {
+        "REFERENCIA": {"REFERENCIA", "REFERENCE", "REF"},
+        "NOMBRE": {"NOMBRE", "NOMBRE_CLIENTE", "CLIENTE"},
+        "EMAIL": {"EMAIL", "CORREO", "CORREO_ELECTRONICO", "E_MAIL"},
+        "SALDO": {"SALDO", "SALDO_CLIENTE"},
+        "MORA": {"MORA", "MORA_STATUS", "STATUS_MORA", "ESTADO_MORA"},
+        "ENCARGADO": {"ENCARGADO", "PERSONA", "NEGOCIADOR", "RESPONSABLE"},
+    }
+    columnas_por_clave = {_clave_columna(c): c for c in base.columns}
+    for canonica, posibles in aliases.items():
+        if canonica in base.columns:
+            continue
+        origen = next((columnas_por_clave[p] for p in posibles if p in columnas_por_clave), None)
+        base[canonica] = base[origen] if origen is not None else ""
 
     # Normalizamos primero para evitar que valores vacíos o formatos de Sheets
     # rompan la construcción de destinatarios.
@@ -1809,7 +1829,9 @@ def preparar_clientes_campana(fila_campana):
 
     no_encontradas = 0
     if tipo == "PERSONALIZADA":
-        refs_txt = str(fila_campana.get("REFERENCIAS", "") or "").strip()
+        comentarios_guardados = str(fila_campana.get("COMENTARIOS", "") or "")
+        match_refs = re.search(r"\[REFS_PERSONALIZADAS:([^\]]*)\]", comentarios_guardados)
+        refs_txt = match_refs.group(1).strip() if match_refs else ""
         refs_solicitadas = []
         vistas = set()
         for parte in re.split(r"[\n,;\t ]+", refs_txt):
