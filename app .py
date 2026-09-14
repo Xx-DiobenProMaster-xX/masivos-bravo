@@ -5,6 +5,10 @@ import gspread
 import google.auth
 import json
 from google.oauth2.service_account import Credentials
+from google.oauth2.credentials import Credentials as OAuthCredentials
+from google_auth_oauthlib.flow import Flow
+from googleapiclient.discovery import build
+import requests
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import unicodedata
@@ -43,6 +47,89 @@ TZ = ZoneInfo("America/Bogota")
 AHORA = datetime.now(TZ)
 HOY = AHORA.date()
 
+
+# ============================================================
+# GOOGLE OAUTH / GMAIL
+# ============================================================
+
+GOOGLE_OAUTH_SCOPES = [
+    "openid",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/userinfo.profile",
+    "https://www.googleapis.com/auth/gmail.send",
+]
+
+def obtener_config_oauth():
+    if "google_oauth" not in st.secrets:
+        return None
+    cfg = st.secrets["google_oauth"]
+    requeridos = ["client_id", "client_secret", "redirect_uri"]
+    if any(not str(cfg.get(k, "")).strip() for k in requeridos):
+        return None
+    return {k: str(cfg[k]).strip() for k in requeridos}
+
+def crear_flujo_oauth(state=None):
+    cfg = obtener_config_oauth()
+    if not cfg:
+        raise ValueError("Falta configurar [google_oauth] en Streamlit Secrets.")
+    client_config = {
+        "web": {
+            "client_id": cfg["client_id"],
+            "client_secret": cfg["client_secret"],
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "redirect_uris": [cfg["redirect_uri"]],
+        }
+    }
+    return Flow.from_client_config(
+        client_config, scopes=GOOGLE_OAUTH_SCOPES,
+        redirect_uri=cfg["redirect_uri"], state=state
+    )
+
+def credenciales_gmail_sesion():
+    datos = st.session_state.get("google_oauth_credentials")
+    if not datos:
+        return None
+    return OAuthCredentials(
+        token=datos.get("token"),
+        refresh_token=datos.get("refresh_token"),
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=datos.get("client_id"),
+        client_secret=datos.get("client_secret"),
+        scopes=datos.get("scopes") or GOOGLE_OAUTH_SCOPES,
+    )
+
+def procesar_callback_oauth():
+    codigo = st.query_params.get("code")
+    state = st.query_params.get("state")
+    if not codigo or st.session_state.get("google_oauth_credentials"):
+        return
+    state_esperado = st.session_state.get("google_oauth_state")
+    if state_esperado and state != state_esperado:
+        st.error("El estado de OAuth no coincide. Intenta conectar nuevamente.")
+        return
+    try:
+        flujo = crear_flujo_oauth(state=state)
+        cfg = obtener_config_oauth()
+        flujo.fetch_token(code=codigo)
+        c = flujo.credentials
+        st.session_state["google_oauth_credentials"] = {
+            "token": c.token, "refresh_token": c.refresh_token,
+            "client_id": cfg["client_id"], "client_secret": cfg["client_secret"],
+            "scopes": list(c.scopes or GOOGLE_OAUTH_SCOPES),
+        }
+        r = requests.get(
+            "https://openidconnect.googleapis.com/v1/userinfo",
+            headers={"Authorization": f"Bearer {c.token}"}, timeout=15
+        )
+        if r.ok:
+            st.session_state["google_oauth_email"] = r.json().get("email", "")
+        st.query_params.clear()
+        st.rerun()
+    except Exception as e:
+        st.error(f"No pude completar la conexión con Google: {e}")
+
+procesar_callback_oauth()
 
 # ============================================================
 # ESTILOS
@@ -4739,3 +4826,45 @@ elif menu == "⚙️ Configuración":
     st.write(
         "**Zona horaria:** America/Bogota"
     )
+
+    st.divider()
+    st.subheader("📨 Google Cloud / Gmail")
+    cfg_oauth = obtener_config_oauth()
+    cred_gmail = credenciales_gmail_sesion()
+
+    if not cfg_oauth:
+        st.error("No encontré la configuración [google_oauth] en Streamlit Secrets.")
+    elif cred_gmail is None:
+        st.warning("Gmail todavía no está conectado en esta sesión.")
+        try:
+            flujo = crear_flujo_oauth()
+            url_auth, state = flujo.authorization_url(
+                access_type="offline",
+                include_granted_scopes="true",
+                prompt="consent"
+            )
+            st.session_state["google_oauth_state"] = state
+            st.link_button("🔐 Conectar con Google", url_auth, type="primary")
+            st.caption(f"Redirect configurado: {cfg_oauth['redirect_uri']}")
+        except Exception as e:
+            st.error(f"No pude preparar OAuth: {e}")
+    else:
+        email_oauth = st.session_state.get("google_oauth_email", "")
+        st.success(
+            "✅ Gmail conectado" + (f" como {email_oauth}" if email_oauth else "")
+        )
+        st.info(
+            "La conexión usa el permiso mínimo gmail.send. "
+            "Todavía no se enviará ningún correo automáticamente desde esta pantalla."
+        )
+        try:
+            build("gmail", "v1", credentials=cred_gmail, cache_discovery=False)
+            st.success("✅ Credenciales de Gmail listas para enviar mediante Gmail API")
+        except Exception as e:
+            st.error(f"No pude inicializar Gmail API: {e}")
+
+        if st.button("Desconectar Google", key="desconectar_google_oauth"):
+            st.session_state.pop("google_oauth_credentials", None)
+            st.session_state.pop("google_oauth_email", None)
+            st.session_state.pop("google_oauth_state", None)
+            st.rerun()
