@@ -1593,8 +1593,6 @@ TIPOS_CAMPANA_MANUAL = [
     "MORA_30",
     "MORA_60",
     "MORA_90",
-    "PRUEBA",
-    "PERSONALIZADA",
 ]
 
 
@@ -1755,13 +1753,6 @@ def preparar_clientes_campana(fila_campana):
         base = base[
             base["MORA"].apply(lambda x: normalizar(x).replace("_", " ") == objetivo)
         ].copy()
-    elif tipo == "PRUEBA":
-        # PRUEBA no selecciona automáticamente clientes reales.
-        # Se deja vacía para evitar envíos accidentales.
-        base = base.iloc[0:0].copy()
-    elif tipo == "PERSONALIZADA":
-        # La selección personalizada se hará en la vista previa mediante búsqueda.
-        pass
 
     base["_REF"] = base["REFERENCIA"].apply(normalizar_referencia)
     base = base[base["_REF"] != ""].copy()
@@ -3668,7 +3659,7 @@ elif menu == "📧 Campañas":
 
     tab_nueva, tab_preparar, tab_historial = st.tabs([
         "➕ Nueva campaña",
-        "👥 Preparar destinatarios",
+        "👥 Revisar y preparar",
         "📋 Campañas creadas",
     ])
 
@@ -3698,22 +3689,13 @@ elif menu == "📧 Campañas":
                     value=AHORA.replace(second=0, microsecond=0).time()
                 )
 
-            ids_plantillas = obtener_ids_plantillas_activas()
-            plantilla_forzada = MAPA_PLANTILLAS_MORA.get(tipo_campana)
-
-            if plantilla_forzada:
-                st.text_input(
-                    "Plantilla",
-                    value=plantilla_forzada,
-                    disabled=True
-                )
-                plantilla_campana = plantilla_forzada
-            else:
-                plantilla_campana = st.selectbox(
-                    "Plantilla",
-                    ids_plantillas if ids_plantillas else [""],
-                    help="Para PRUEBA y PERSONALIZADA puedes escoger la plantilla."
-                )
+            plantilla_campana = MAPA_PLANTILLAS_MORA.get(tipo_campana, "")
+            st.text_input(
+                "Plantilla",
+                value=plantilla_campana,
+                disabled=True,
+                help="La plantilla se asigna automáticamente según la mora."
+            )
 
             comentarios_campana = st.text_area(
                 "Comentarios",
@@ -3745,7 +3727,11 @@ elif menu == "📧 Campañas":
                 st.error(f"❌ No se pudo crear la campaña: {e}")
 
     with tab_preparar:
-        st.subheader("Revisar y preparar destinatarios")
+        st.subheader("Revisar y preparar campaña")
+        st.caption(
+            "Selecciona un borrador para ver exactamente qué clientes entrarían. "
+            "Nada se envía en esta etapa."
+        )
 
         if campanas.empty or "ID_CAMPAÑA" not in campanas.columns:
             st.info("Todavía no hay campañas disponibles.")
@@ -3781,92 +3767,67 @@ elif menu == "📧 Campañas":
 
                     tipo_sel = str(fila_sel.get("FILTRO", "")).strip().upper()
 
-                    if tipo_sel == "PRUEBA":
-                        st.warning(
-                            "PRUEBA no toma clientes automáticamente. "
-                            "La prueba interna la conectaremos cuando habilitemos Gmail."
-                        )
-                    else:
-                        try:
-                            candidatos, resumen = preparar_clientes_campana(fila_sel)
+                    try:
+                        candidatos, resumen = preparar_clientes_campana(fila_sel)
 
-                            # PERSONALIZADA: permitir búsqueda y selección manual segura.
-                            if tipo_sel == "PERSONALIZADA" and not candidatos.empty:
-                                buscar_personalizada = st.text_input(
-                                    "Buscar clientes para esta campaña",
-                                    placeholder="Referencia, nombre o correo...",
-                                    key=f"buscar_personalizada_{id_sel}"
+                        r1, r2, r3, r4, r5 = st.columns(5)
+                        r1.metric("Elegibles", len(candidatos))
+                        r2.metric("Excluir_correo", resumen.get("excluidos", 0))
+                        r3.metric("Mora 180", resumen.get("mora_180", 0))
+                        r4.metric("Sin correo", resumen.get("sin_email", 0))
+                        r5.metric("Duplicados", resumen.get("duplicados", 0))
+
+                        if candidatos.empty:
+                            st.info("No hay destinatarios elegibles con estas reglas.")
+                        else:
+                            mostrar = [
+                                c for c in [
+                                    "REFERENCIA", "NOMBRE", "EMAIL", "MORA",
+                                    "ENCARGADO", "SALDO", "ASUNTO_PREVIO"
+                                ] if c in candidatos.columns
+                            ]
+                            st.dataframe(
+                                candidatos[mostrar].head(500),
+                                use_container_width=True,
+                                hide_index=True
+                            )
+
+                            st.caption(
+                                f"Vista previa: {min(len(candidatos), 500)} de {len(candidatos)} destinatarios."
+                            )
+
+                            if str(fila_sel.get("ESTADO", "")).strip().upper() == "PREPARADA":
+                                st.success(
+                                    "✅ Esta campaña ya fue preparada. Los correos siguen en BORRADOR."
                                 )
-                                if buscar_personalizada.strip():
-                                    t = buscar_personalizada.strip().lower()
-                                    mask = pd.Series(False, index=candidatos.index)
-                                    for c in ["REFERENCIA", "NOMBRE", "EMAIL"]:
-                                        if c in candidatos.columns:
-                                            mask |= candidatos[c].astype(str).str.lower().str.contains(t, regex=False, na=False)
-                                    candidatos = candidatos[mask].copy()
-                                else:
-                                    st.caption(
-                                        "En PERSONALIZADA usa el buscador para reducir la lista antes de preparar."
-                                    )
-
-                            r1, r2, r3, r4, r5 = st.columns(5)
-                            r1.metric("Elegibles", len(candidatos))
-                            r2.metric("Excluir_correo", resumen.get("excluidos", 0))
-                            r3.metric("Mora 180", resumen.get("mora_180", 0))
-                            r4.metric("Sin correo", resumen.get("sin_email", 0))
-                            r5.metric("Duplicados", resumen.get("duplicados", 0))
-
-                            if candidatos.empty:
-                                st.info("No hay destinatarios elegibles con estas reglas.")
                             else:
-                                mostrar = [
-                                    c for c in [
-                                        "REFERENCIA", "NOMBRE", "EMAIL", "MORA",
-                                        "ENCARGADO", "SALDO", "ASUNTO_PREVIO"
-                                    ] if c in candidatos.columns
-                                ]
-                                st.dataframe(
-                                    candidatos[mostrar].head(500),
+                                confirmar = st.checkbox(
+                                    "Confirmo que revisé los destinatarios. Preparar en COLA_ENVIO como BORRADOR.",
+                                    key=f"confirmar_{id_sel}"
+                                )
+
+                                if st.button(
+                                    "📥 Preparar campaña",
+                                    type="primary",
                                     use_container_width=True,
-                                    hide_index=True
-                                )
+                                    disabled=not confirmar,
+                                    key=f"preparar_{id_sel}"
+                                ):
+                                    try:
+                                        agregados, omitidos = preparar_campana_en_cola(
+                                            id_sel,
+                                            candidatos
+                                        )
+                                        st.success(
+                                            f"✅ Preparada: {agregados} destinatarios en BORRADOR. "
+                                            f"Omitidos por duplicado: {omitidos}. No se envió ningún correo."
+                                        )
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"❌ No se pudo preparar: {e}")
 
-                                st.caption(
-                                    f"Vista previa: {min(len(candidatos), 500)} de {len(candidatos)} destinatarios."
-                                )
-
-                                if str(fila_sel.get("ESTADO", "")).strip().upper() == "PREPARADA":
-                                    st.success(
-                                        "✅ Esta campaña ya fue preparada. Los correos siguen en BORRADOR."
-                                    )
-                                else:
-                                    confirmar = st.checkbox(
-                                        "Confirmo que revisé los destinatarios. Preparar en COLA_ENVIO como BORRADOR.",
-                                        key=f"confirmar_{id_sel}"
-                                    )
-
-                                    if st.button(
-                                        "📥 Preparar campaña",
-                                        type="primary",
-                                        use_container_width=True,
-                                        disabled=not confirmar,
-                                        key=f"preparar_{id_sel}"
-                                    ):
-                                        try:
-                                            agregados, omitidos = preparar_campana_en_cola(
-                                                id_sel,
-                                                candidatos
-                                            )
-                                            st.success(
-                                                f"✅ Preparada: {agregados} destinatarios en BORRADOR. "
-                                                f"Omitidos por duplicado: {omitidos}. No se envió ningún correo."
-                                            )
-                                            st.rerun()
-                                        except Exception as e:
-                                            st.error(f"❌ No se pudo preparar: {e}")
-
-                        except Exception as e:
-                            st.error(f"❌ No pude construir los destinatarios: {e}")
+                    except Exception as e:
+                        st.error(f"❌ No pude construir los destinatarios: {e}")
 
     with tab_historial:
         st.subheader("Campañas")
@@ -3975,7 +3936,7 @@ elif menu == "⚙️ Configuración":
 
     st.write(
         "**Datos PaB:** completa NOMBRE y EMAIL desde "
-        "2. Cartera Berex cuando estén vacíos"
+        "Info_Clientes_V2 cuando estén vacíos"
     )
 
     st.write(
