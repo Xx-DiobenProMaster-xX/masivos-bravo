@@ -2328,6 +2328,23 @@ respuestas["_MAS_24H"] = (
 )
 
 
+def texto_tiempo_pendiente(fecha):
+    if pd.isna(fecha):
+        return "Sin fecha"
+    try:
+        delta = AHORA.replace(tzinfo=None) - fecha.to_pydatetime()
+        horas = max(0, int(delta.total_seconds() // 3600))
+        if horas < 24:
+            return f"{horas} h"
+        dias = horas // 24
+        resto = horas % 24
+        return f"{dias} d {resto} h"
+    except Exception:
+        return "Sin fecha"
+
+respuestas["_TIEMPO_PENDIENTE"] = respuestas["_FECHA"].apply(texto_tiempo_pendiente)
+
+
 total_respuestas = len(
     respuestas
 )
@@ -3896,6 +3913,20 @@ elif menu == "💬 Respuestas":
                 encargado
             )
 
+            d, e, f = st.columns(3)
+            d.write("**Fecha respuesta**")
+            fecha_txt = fila.get("FECHA_RESPUESTA", "")
+            d.write(str(fecha_txt) if str(fecha_txt).strip() else "—")
+            e.write("**Campaña**")
+            camp_txt = str(fila.get("ID_CAMPAÑA", "")).strip()
+            e.write(camp_txt if camp_txt else "—")
+            f.write("**Tiempo pendiente**")
+            f.write("Gestionada" if atendida else str(fila.get("_TIEMPO_PENDIENTE", "Sin fecha")))
+
+            email_txt = str(fila.get("EMAIL_CLIENTE", "")).strip()
+            if email_txt:
+                st.caption(f"📧 {email_txt}")
+
             st.markdown("---")
 
             st.write(
@@ -4534,28 +4565,114 @@ elif menu == "📧 Campañas":
 
 elif menu == "⚠️ Pendientes":
 
-    st.title(
-        "⚠️ Centro de pendientes"
+    st.markdown('<div class="titulo">⚠️ Centro de pendientes</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="subtitulo">Prioriza respuestas de clientes que todavía no han sido gestionadas</div>',
+        unsafe_allow_html=True
     )
 
-    p1, p2, p3 = st.columns(
-        3
-    )
+    pendientes_resp = respuestas[~respuestas["_ATENDIDA"]].copy()
+    pendientes_resp = pendientes_resp.sort_values("_FECHA", ascending=True, na_position="last")
 
-    p1.metric(
-        "Respuestas sin gestionar",
-        total_pendientes
-    )
+    p1, p2, p3, p4 = st.columns(4)
+    p1.metric("🟡 Sin gestionar", len(pendientes_resp))
+    p2.metric("🔴 +24 horas", pendientes_24)
+    p3.metric("🟢 Menos de 24h", max(0, len(pendientes_resp) - pendientes_24))
+    p4.metric("🏦 PaB pendientes", total_recordatorios_pendientes)
 
-    p2.metric(
-        "Respuestas +24h",
-        pendientes_24
-    )
+    st.markdown("---")
 
-    p3.metric(
-        "Recordatorios PaB pendientes",
-        total_recordatorios_pendientes
-    )
+    if pendientes_resp.empty:
+        st.success("✅ No hay respuestas pendientes de gestión.")
+    else:
+        f1, f2 = st.columns([1, 1])
+        with f1:
+            prioridad = st.selectbox(
+                "Prioridad",
+                ["Todas", "Solo +24h", "Menos de 24h"],
+                key="prioridad_pendientes"
+            )
+        with f2:
+            encargados_p = []
+            if "ENCARGADO" in pendientes_resp.columns:
+                encargados_p = sorted([
+                    str(x).strip() for x in pendientes_resp["ENCARGADO"].unique()
+                    if str(x).strip()
+                ])
+            encargado_p = st.selectbox(
+                "Encargado", ["Todos"] + encargados_p, key="encargado_pendientes"
+            )
+
+        vista_p = pendientes_resp.copy()
+        if prioridad == "Solo +24h":
+            vista_p = vista_p[vista_p["_MAS_24H"]]
+        elif prioridad == "Menos de 24h":
+            vista_p = vista_p[~vista_p["_MAS_24H"]]
+        if encargado_p != "Todos" and "ENCARGADO" in vista_p.columns:
+            vista_p = vista_p[vista_p["ENCARGADO"].astype(str).str.strip() == encargado_p]
+
+        columnas_p = [c for c in [
+            "FECHA_RESPUESTA", "REFERENCIA", "NOMBRE_CLIENTE", "EMAIL_CLIENTE",
+            "ID_CAMPAÑA", "ASUNTO", "ENCARGADO", "_TIEMPO_PENDIENTE"
+        ] if c in vista_p.columns]
+        tabla_p = vista_p[columnas_p].copy()
+        tabla_p = tabla_p.rename(columns={"_TIEMPO_PENDIENTE": "TIEMPO PENDIENTE"})
+        st.dataframe(tabla_p.head(500), use_container_width=True, hide_index=True)
+        st.caption(f"Mostrando {min(len(vista_p), 500)} de {len(vista_p)} respuestas pendientes.")
+
+        st.markdown("---")
+        st.subheader("🛠️ Gestionar pendiente")
+
+        opciones_p = vista_p.index.tolist()
+        if opciones_p:
+            idx_p = st.selectbox(
+                "Selecciona una respuesta",
+                opciones_p,
+                format_func=lambda i: (
+                    f"{'🔴' if bool(vista_p.loc[i, '_MAS_24H']) else '🟡'} "
+                    f"{str(vista_p.loc[i].get('NOMBRE_CLIENTE', 'Cliente'))} · "
+                    f"{str(vista_p.loc[i].get('REFERENCIA', ''))} · "
+                    f"{str(vista_p.loc[i].get('_TIEMPO_PENDIENTE', ''))}"
+                ),
+                key="detalle_pendiente"
+            )
+            fp = vista_p.loc[idx_p]
+            idp = str(fp.get("ID_RESPUESTA", "")).strip()
+
+            q1, q2, q3, q4 = st.columns(4)
+            q1.metric("Cliente", str(fp.get("NOMBRE_CLIENTE", "")) or "—")
+            q2.metric("Referencia", str(fp.get("REFERENCIA", "")) or "—")
+            q3.metric("Encargado", str(fp.get("ENCARGADO", "")) or "—")
+            q4.metric("Pendiente", str(fp.get("_TIEMPO_PENDIENTE", "")) or "—")
+
+            st.write("**Asunto**")
+            st.write(str(fp.get("ASUNTO", "")) or "—")
+            st.write("**Respuesta del cliente**")
+            st.info(str(fp.get("RESPUESTA", "")) or "Sin texto")
+
+            comentario_p = st.text_area(
+                "🗒️ Comentario interno",
+                value=str(fp.get("COMENTARIOS", "")).strip(),
+                height=100,
+                key=f"comentario_pendiente_{idp}_{idx_p}"
+            )
+            c1, c2 = st.columns(2)
+            with c1:
+                if st.button("💾 Guardar comentario", key=f"guardar_p_{idp}_{idx_p}", use_container_width=True):
+                    try:
+                        guardar_comentario(idp, comentario_p)
+                        st.success("Comentario guardado.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+            with c2:
+                if st.button("✅ Marcar gestionada", key=f"gestionar_p_{idp}_{idx_p}", use_container_width=True, type="primary"):
+                    try:
+                        marcar_respuesta_gestionada(idp, comentario_p)
+                        st.success("Respuesta marcada como gestionada.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error: {e}")
 
 
 # ============================================================
