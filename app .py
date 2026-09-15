@@ -2182,6 +2182,7 @@ MAPA_PLANTILLAS_MORA = {
 }
 
 TIPOS_CAMPANA_MANUAL = [
+    "PRUEBA",
     "MORA_1",
     "MORA_30",
     "MORA_60",
@@ -2374,10 +2375,16 @@ def preparar_clientes_campana(fila_campana):
     tipo = str(fila_campana.get("FILTRO", "")).strip().upper()
     id_plantilla = str(fila_campana.get("PLANTILLA", "")).strip()
 
-    base = clientes.copy()
-
-    if base is None or base.empty:
-        raise ValueError("La hoja CLIENTES está vacía.")
+    if tipo == "PRUEBA":
+        base = pruebas.copy()
+        if base is None or base.empty:
+            raise ValueError("La hoja PRUEBAS está vacía.")
+        nombre_hoja_base = "PRUEBAS"
+    else:
+        base = clientes.copy()
+        if base is None or base.empty:
+            raise ValueError("La hoja CLIENTES está vacía.")
+        nombre_hoja_base = "CLIENTES"
 
     # CLIENTES tiene encabezados como Referencia, Nombre, Email, Saldo, Mora...
     # Los llevamos a nombres internos canónicos SIN modificar Google Sheets.
@@ -2418,8 +2425,8 @@ def preparar_clientes_campana(fila_campana):
 
     if "REFERENCIA" not in base.columns:
         raise ValueError(
-            "No pude identificar la columna Referencia de CLIENTES. "
-            f"Columnas encontradas: {', '.join(map(str, clientes.columns))}"
+            f"No pude identificar la columna Referencia de {nombre_hoja_base}. "
+            f"Columnas encontradas: {', '.join(map(str, base.columns))}"
         )
 
     # Usamos una llave interna nueva y la recreamos explícitamente.
@@ -2476,6 +2483,12 @@ def preparar_clientes_campana(fila_campana):
                 .drop(columns=["_ORDEN_PERSONALIZADA"])
                 .copy()
             )
+
+    elif tipo == "PRUEBA":
+        # PRUEBA toma exclusivamente los registros de la hoja PRUEBAS.
+        # Luego siguen aplicando las mismas barreras de seguridad:
+        # deduplicado, Mora 180, Excluir_correo y correo obligatorio.
+        pass
 
     elif tipo in MAPA_PLANTILLAS_MORA:
         objetivo = normalizar(tipo).replace("_", " ")
@@ -3049,6 +3062,10 @@ try:
 
     clientes = cargar_hoja(
         "CLIENTES"
+    )
+
+    pruebas = cargar_hoja(
+        "PRUEBAS"
     )
 
     campanas = cargar_hoja(
@@ -4940,6 +4957,7 @@ elif menu == "📧 Campañas":
         )
 
         es_personalizada = tipo_campana == "PERSONALIZADA"
+        es_prueba = tipo_campana == "PRUEBA"
         ids_plantillas = obtener_ids_plantillas_activas()
 
         with st.form("form_nueva_campana", clear_on_submit=False):
@@ -4984,6 +5002,21 @@ elif menu == "📧 Campañas":
                     ),
                     height=180,
                     help="El sistema buscará nombre y correo en CLIENTES y aplicará las exclusiones antes de preparar."
+                )
+            elif es_prueba:
+                if ids_plantillas:
+                    plantilla_campana = st.selectbox(
+                        "Plantilla",
+                        ids_plantillas,
+                        help="La prueba usará exclusivamente los destinatarios de la hoja PRUEBAS."
+                    )
+                else:
+                    plantilla_campana = ""
+                    st.error("No encontré plantillas activas en PLANTILLAS.")
+                referencias_personalizadas = ""
+                st.info(
+                    "🧪 Esta campaña tomará únicamente los registros de la hoja PRUEBAS. "
+                    "Mora 180, Excluir_correo y filas sin email seguirán bloqueándose."
                 )
             else:
                 plantilla_campana = MAPA_PLANTILLAS_MORA.get(tipo_campana, "")
