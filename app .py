@@ -2490,11 +2490,12 @@ def preparar_clientes_campana(fila_campana):
 
     total_base = len(base)
 
-    duplicados = int(
+    duplicados = entero_seguro(
         base.duplicated(
             subset=["_REFERENCIA_NORMALIZADA"],
             keep="first"
-        ).sum()
+        ).sum(),
+        0
     )
     base = base.drop_duplicates(
         subset=["_REFERENCIA_NORMALIZADA"],
@@ -2502,16 +2503,16 @@ def preparar_clientes_campana(fila_campana):
     ).copy()
 
     mask_180 = base["MORA"].apply(es_mora_180)
-    n_mora_180 = int(mask_180.sum())
+    n_mora_180 = entero_seguro(mask_180.sum(), 0)
     base = base.loc[~mask_180].copy()
 
     excluidas = referencias_excluidas_normalizadas()
     mask_excl = base["_REFERENCIA_NORMALIZADA"].isin(excluidas)
-    n_excl = int(mask_excl.sum())
+    n_excl = entero_seguro(mask_excl.sum(), 0)
     base = base.loc[~mask_excl].copy()
 
     mask_sin_email = base["EMAIL"].apply(valor_vacio)
-    n_sin_email = int(mask_sin_email.sum())
+    n_sin_email = entero_seguro(mask_sin_email.sum(), 0)
     base = base.loc[~mask_sin_email].copy()
 
     plantilla = obtener_plantilla_generica(id_plantilla)
@@ -5219,6 +5220,8 @@ elif menu == "📧 Campañas":
 
                     except Exception as e:
                         st.error(f"❌ No pude construir los destinatarios: {e}")
+                        with st.expander("🔎 Ver detalle técnico"):
+                            st.exception(e)
 
     with tab_historial:
         st.subheader("Panel de campañas")
