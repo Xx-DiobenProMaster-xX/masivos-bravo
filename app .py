@@ -257,35 +257,61 @@ BRAVO_WHATSAPP = "573012411885"
 BRAVO_WHATSAPP_DISPLAY = "301 241 1885"
 
 def _texto_a_html_bravo(texto):
-    """Convierte texto de PLANTILLAS a HTML seguro para Gmail sin comprimir el ancho."""
+    """
+    Convierte el texto de PLANTILLAS a HTML para el correo.
+    Soporta **texto en negrita** y conserva saltos de línea.
+    """
     import html as _html
 
-    t = str(texto or "").strip()
-    if not t:
-        return ""
+    texto = str(texto or "")
+    lineas = texto.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    salida = []
 
-    # Si la plantilla ya contiene HTML real, se respeta tal cual.
-    if re.search(r"<\s*(p|div|br|strong|b|ul|ol|table|a|span)\b", t, flags=re.I):
-        return t
+    def _formatear_linea(linea):
+        # Escapamos primero para no permitir HTML arbitrario desde Sheets.
+        segura = _html.escape(str(linea or ""))
 
-    # Normalizar saltos de línea provenientes de Sheets.
-    t = t.replace("\r\n", "\n").replace("\r", "\n")
-    bloques = [b.strip() for b in re.split(r"\n\s*\n", t) if b.strip()]
-    if not bloques:
-        bloques = [t]
-
-    html_bloques = []
-    for bloque in bloques:
-        seguro = _html.escape(bloque).replace("\n", "<br>")
-        html_bloques.append(
-            '<p style="margin:0 0 16px 0; padding:0; '
-            'font-family:Arial,Helvetica,sans-serif; font-size:15px; '
-            'line-height:24px; color:#333b55; text-align:left; '
-            'word-break:normal; overflow-wrap:break-word; white-space:normal;">'
-            + seguro + '</p>'
+        # **texto** -> <strong>texto</strong>
+        segura = re.sub(
+            r"\*\*(.+?)\*\*",
+            r'<strong style="color:#2d2088;font-weight:700;">\1</strong>',
+            segura
         )
-    return "".join(html_bloques)
 
+        # Si la línea es el saludo personalizado, destacamos el nombre aunque
+        # en Sheets no venga encerrado entre **.
+        patrones_saludo = [
+            r"^(Estimado\(a\)\s+)(.+?)(,?)$",
+            r"^(Hola\s+)(.+?)(,?)$",
+        ]
+        for patron in patrones_saludo:
+            m = re.match(patron, segura, flags=re.I)
+            if m and "<strong" not in m.group(2):
+                segura = (
+                    m.group(1)
+                    + '<strong style="color:#2d2088;font-weight:700;">'
+                    + m.group(2)
+                    + "</strong>"
+                    + m.group(3)
+                )
+                break
+
+        return segura
+
+    for linea in lineas:
+        if not linea.strip():
+            salida.append('<div style="height:10px;line-height:10px;">&nbsp;</div>')
+            continue
+
+        contenido = _formatear_linea(linea)
+        salida.append(
+            '<div style="font-size:14px;line-height:22px;color:#27304f;'
+            'margin:0 0 10px 0;">'
+            + contenido +
+            '</div>'
+        )
+
+    return "".join(salida)
 
 def envolver_html_bravo(cuerpo):
     """Maqueta clásica Bravo, basada en tablas para máxima compatibilidad con Gmail."""
