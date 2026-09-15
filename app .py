@@ -1464,7 +1464,7 @@ def asegurar_campana_pab(
         "HORA_ENVIO": AHORA.strftime(
             "%H:%M"
         ),
-        "ESTADO": "PENDIENTE",
+        "ESTADO": "PROGRAMADA",
         "TOTAL_CLIENTES": 0,
         "ENVIADOS": 0,
         "PENDIENTES": 0,
@@ -1563,7 +1563,7 @@ def actualizar_contadores_campana_pab(
                 if len(fila) > i_estado
                 else ""
             ).strip().upper()
-            == "PENDIENTE"
+            in {"BORRADOR", "PENDIENTE", "ENVIANDO"}
         )
     )
 
@@ -1874,7 +1874,7 @@ def agregar_recordatorio_pab_a_cola(
             "asunto",
             ""
         ),
-        "ESTADO": "PENDIENTE",
+        "ESTADO": "BORRADOR",
         "FECHA_PROG": AHORA.strftime(
             "%d/%m/%Y %H:%M"
         ),
@@ -1916,6 +1916,141 @@ def agregar_recordatorio_pab_a_cola(
     st.cache_data.clear()
 
     return id_envio
+
+
+
+def enviar_id_envio_gmail(id_envio, credenciales):
+    """Envía exactamente una fila de COLA_ENVIO si continúa en BORRADOR."""
+    if credenciales is None:
+        raise ValueError("Gmail no está conectado en esta sesión.")
+
+    archivo = obtener_archivo()
+    hoja = archivo.worksheet("COLA_ENVIO")
+    valores = hoja.get_all_values()
+    if len(valores) <= 1:
+        raise ValueError("COLA_ENVIO está vacía.")
+
+    enc = [str(x).strip() for x in valores[0]]
+    requeridas = [
+        "ID_ENVIO", "ID_CAMPAÑA", "EMAIL", "ASUNTO", "CUERPO", "ESTADO",
+        "FECHA_ENVIO", "INTENTOS", "ERROR", "ID_MENSAJE"
+    ]
+    faltan = [c for c in requeridas if c not in enc]
+    if faltan:
+        raise ValueError("Faltan columnas en COLA_ENVIO: " + ", ".join(faltan))
+    idx = {c: enc.index(c) for c in requeridas}
+
+    fila_num = None
+    fila = None
+    for n, f in enumerate(valores[1:], start=2):
+        actual = str(f[idx["ID_ENVIO"]] if len(f) > idx["ID_ENVIO"] else "").strip()
+        if actual == str(id_envio).strip():
+            fila_num, fila = n, f
+            break
+    if fila_num is None:
+        raise ValueError(f"No encontré {id_envio} en COLA_ENVIO.")
+
+    def val(c):
+        i = idx[c]
+        return str(fila[i] if len(fila) > i else "").strip()
+
+    estado = val("ESTADO").upper()
+    if estado == "ENVIADO":
+        return {"estado": "YA_ENVIADO", "gmail_id": val("ID_MENSAJE")}
+    if estado != "BORRADOR":
+        raise ValueError(f"{id_envio} está en estado {estado}; no se reenviará.")
+
+    intentos = entero_seguro(val("INTENTOS"), 0)
+    hoja.update_cell(fila_num, idx["ESTADO"] + 1, "ENVIANDO")
+    hoja.update_cell(fila_num, idx["INTENTOS"] + 1, intentos + 1)
+
+    try:
+        r = enviar_mensaje_gmail(
+            credenciales,
+            val("EMAIL"),
+            val("ASUNTO"),
+            val("CUERPO"),
+        )
+        gmail_id = str(r.get("id", "")).strip()
+        hoja.update_cell(
+            fila_num, idx["FECHA_ENVIO"] + 1,
+            datetime.now(TZ).strftime("%d/%m/%Y %H:%M:%S")
+        )
+        hoja.update_cell(fila_num, idx["ID_MENSAJE"] + 1, gmail_id)
+        hoja.update_cell(fila_num, idx["ERROR"] + 1, "")
+        hoja.update_cell(fila_num, idx["ESTADO"] + 1, "ENVIADO")
+        return {"estado": "ENVIADO", "gmail_id": gmail_id}
+    except Exception as e:
+        hoja.update_cell(fila_num, idx["ERROR"] + 1, str(e)[:500])
+        hoja.update_cell(fila_num, idx["ESTADO"] + 1, "ERROR")
+        raise
+
+
+def enviar_pab_hoy_ahora(credenciales):
+    """
+    Genera y envía los PAB000 pendientes de HOY.
+    Respeta sin email, Mora 180, Excluir_correo, AVISO_HOY y duplicados.
+    """
+    if credenciales is None:
+        raise ValueError("Gmail no está conectado. Ve a Configuración.")
+
+    if pab.empty:
+        return {"enviados": 0, "errores": 0, "omitidos": 0, "detalle": []}
+
+    candidatos = pab[
+        (pab["_DIAS"] == 0)
+        & (~pab["_AVISO_HOY"])
+    ].copy()
+
+    enviados = errores = omitidos = 0
+    detalle = []
+
+    for _, fila in candidatos.iterrows():
+        ref = str(fila.get("REFERENCIA", "")).strip()
+        email = str(fila.get("EMAIL", "")).strip()
+        try:
+            vista = preparar_vista_previa_pab(fila)
+            if vista is None or vista.get("error"):
+                omitidos += 1
+                detalle.append({"REFERENCIA": ref, "EMAIL": email, "RESULTADO": "OMITIDO"})
+                continue
+
+            # agregar_recordatorio... valida email, mora, exclusiones y duplicados.
+            try:
+                id_envio = agregar_recordatorio_pab_a_cola(fila, vista)
+            except Exception as e:
+                # Si ya existe en cola, recuperar el ID determinístico y procesarlo
+                # solo si todavía está BORRADOR.
+                id_envio = (
+                    f"ENV-PAB-{HOY.strftime('%Y%m%d')}-{ref}-PAB000"
+                )
+                if "ya existe en COLA_ENVIO" not in str(e):
+                    raise
+
+            r = enviar_id_envio_gmail(id_envio, credenciales)
+            if r["estado"] in {"ENVIADO", "YA_ENVIADO"}:
+                enviados += 1
+                detalle.append({"REFERENCIA": ref, "EMAIL": email, "RESULTADO": r["estado"]})
+            else:
+                omitidos += 1
+        except Exception as e:
+            errores += 1
+            detalle.append({"REFERENCIA": ref, "EMAIL": email, "RESULTADO": f"ERROR: {e}"})
+
+    # Actualizar la campaña de hoy después de procesar todos los correos.
+    try:
+        actualizar_contadores_campana_pab(f"PAB-{HOY.strftime('%Y%m%d')}")
+    except Exception:
+        pass
+
+    st.cache_data.clear()
+    return {
+        "enviados": enviados,
+        "errores": errores,
+        "omitidos": omitidos,
+        "detalle": detalle,
+    }
+
 
 
 # ============================================================
@@ -3257,6 +3392,57 @@ elif menu == "🏦 Pagos a Banco":
         '</div>',
         unsafe_allow_html=True
     )
+
+    st.markdown("### 🚀 Envío PaB de hoy")
+    cred_pab_hoy = credenciales_gmail_sesion()
+    pendientes_hoy_reales = int(
+        ((pab["_DIAS"] == 0) & (~pab["_AVISO_HOY"])).sum()
+    ) if not pab.empty else 0
+
+    cph1, cph2 = st.columns([1, 2])
+    cph1.metric("Pendientes de hoy", pendientes_hoy_reales)
+    with cph2:
+        if cred_pab_hoy is None:
+            st.warning(
+                "Gmail no está conectado en esta sesión. Ve a ⚙️ Configuración "
+                "y conecta Google antes de enviar."
+            )
+        elif pendientes_hoy_reales == 0:
+            st.success("✅ No hay recordatorios PAB000 pendientes para hoy.")
+        else:
+            st.warning(
+                f"Son las {datetime.now(TZ).strftime('%H:%M')} en Bogotá. "
+                f"Hay {pendientes_hoy_reales} recordatorio(s) de pago de hoy pendientes."
+            )
+            confirmar_pab_hoy = st.checkbox(
+                f"Confirmo enviar ahora los {pendientes_hoy_reales} PaB pendientes de hoy",
+                key="confirmar_envio_pab_hoy"
+            )
+            if st.button(
+                "🏦📨 ENVIAR PaB DE HOY AHORA",
+                type="primary",
+                use_container_width=True,
+                disabled=not confirmar_pab_hoy,
+                key="enviar_pab_hoy_ahora"
+            ):
+                try:
+                    with st.spinner("Generando y enviando PaB de hoy..."):
+                        resultado_pab_hoy = enviar_pab_hoy_ahora(cred_pab_hoy)
+                    st.success(
+                        f"✅ PaB procesados: {resultado_pab_hoy['enviados']} enviados, "
+                        f"{resultado_pab_hoy['errores']} errores, "
+                        f"{resultado_pab_hoy['omitidos']} omitidos."
+                    )
+                    if resultado_pab_hoy["detalle"]:
+                        st.dataframe(
+                            pd.DataFrame(resultado_pab_hoy["detalle"]),
+                            use_container_width=True,
+                            hide_index=True
+                        )
+                except Exception as e:
+                    st.error(f"❌ No pude procesar los PaB de hoy: {e}")
+
+    st.markdown("---")
 
     error_info_v2 = info_enriquecimiento_pab.get(
         "error_info_v2"
@@ -4988,7 +5174,21 @@ elif menu == "📧 Campañas":
             )
 
             st.markdown("### 🔎 Detalle de campaña")
-            ids_detalle = vista_camp["ID_CAMPAÑA"].astype(str).tolist()
+            # CAMPAÑAS es la única fuente de opciones del selector.
+            # Si el usuario borró una campaña directamente en Sheets,
+            # quitamos cualquier selección vieja guardada por Streamlit.
+            ids_detalle = [
+                str(x).strip()
+                for x in vista_camp["ID_CAMPAÑA"].astype(str).tolist()
+                if str(x).strip()
+            ]
+            clave_detalle = "detalle_panel_campanas"
+            if (
+                clave_detalle in st.session_state
+                and str(st.session_state.get(clave_detalle, "")).strip() not in ids_detalle
+            ):
+                del st.session_state[clave_detalle]
+
             if ids_detalle:
                 id_detalle = st.selectbox(
                     "Selecciona una campaña",
@@ -5342,6 +5542,26 @@ elif menu == "⚙️ Configuración":
             st.success("✅ Credenciales de Gmail listas para enviar mediante Gmail API")
         except Exception as e:
             st.error(f"No pude inicializar Gmail API: {e}")
+
+        st.markdown("#### ⏰ Automatización GitHub (8:00 a. m.)")
+        datos_oauth_gh = st.session_state.get("google_oauth_credentials", {})
+        refresh_gh = str(datos_oauth_gh.get("refresh_token", "") or "").strip()
+        if refresh_gh:
+            with st.expander("🔐 Preparar Gmail para GitHub Actions"):
+                st.warning(
+                    "Este valor es una credencial sensible. Cópialo únicamente a "
+                    "GitHub → Settings → Secrets and variables → Actions."
+                )
+                st.code(refresh_gh, language=None)
+                st.caption(
+                    "Créalo con el nombre exacto GMAIL_REFRESH_TOKEN. "
+                    "No lo pegues en el código ni lo compartas por chat."
+                )
+        else:
+            st.warning(
+                "La sesión Gmail no contiene refresh_token. Desconecta Google y vuelve "
+                "a conectarlo para generar uno con acceso offline."
+            )
 
         st.markdown("#### 🚀 Motor de envío")
         st.caption(
