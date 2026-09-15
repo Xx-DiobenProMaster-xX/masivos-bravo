@@ -7,9 +7,115 @@ from zoneinfo import ZoneInfo
 from email.message import EmailMessage
 
 import gspread
+from gspread.exceptions import APIError
+import random
+from time import sleep
 from google.oauth2.service_account import Credentials as ServiceCredentials
 from google.oauth2.credentials import Credentials as OAuthCredentials
 from googleapiclient.discovery import build
+
+
+
+# ============================================================
+# RETRY GLOBAL PARA GSPREAD
+# Todas las llamadas de Client / Spreadsheet / Worksheet pasan
+# automáticamente por _retry, incluyendo open_by_key(),
+# worksheet(), get(), get_all_values(), update_cell(),
+# append_row(s), delete_rows(), batch_update(), etc.
+# ============================================================
+
+_RETRIABLE_HTTP_CODES = {429, 500, 502, 503, 504}
+
+
+def _retry(fn, label="", tries=10, base_sleep=1.5, jitter=0.6, max_sleep=45):
+    last_err = None
+
+    for i in range(tries):
+        try:
+            return fn()
+        except APIError as e:
+            last_err = e
+
+            response = getattr(e, "response", None)
+            status = getattr(response, "status_code", None)
+
+            # Fallback para versiones de gspread donde el status no viene expuesto.
+            msg = str(e)
+            retriable = (
+                status in _RETRIABLE_HTTP_CODES
+                or any(f"[{code}]" in msg for code in _RETRIABLE_HTTP_CODES)
+            )
+
+            if not retriable:
+                raise
+
+            sleep_s = min(
+                base_sleep * (2 ** i) + random.uniform(0, jitter),
+                max_sleep
+            )
+
+            print(
+                f"[GSPREAD RETRY {i + 1}/{tries}] "
+                f"{label or 'request'} -> "
+                f"{'HTTP ' + str(status) if status else msg[:100]} | "
+                f"sleep {sleep_s:.1f}s"
+            )
+            sleep(sleep_s)
+
+    raise last_err
+
+
+def _wrap_gspread_result(value):
+    """Envuelve recursivamente objetos gspread; deja intactos datos normales."""
+    if isinstance(value, _GSpreadRetryProxy):
+        return value
+
+    module = getattr(value.__class__, "__module__", "")
+    if module.startswith("gspread"):
+        return _GSpreadRetryProxy(value)
+
+    return value
+
+
+class _GSpreadRetryProxy:
+    """
+    Proxy transparente: cualquier método de gspread ejecutado sobre Client,
+    Spreadsheet o Worksheet usa _retry. Los objetos gspread devueltos por
+    una llamada también quedan envueltos automáticamente.
+    """
+
+    __slots__ = ("_obj",)
+
+    def __init__(self, obj):
+        object.__setattr__(self, "_obj", obj)
+
+    def __getattr__(self, name):
+        attr = getattr(self._obj, name)
+
+        if not callable(attr):
+            return _wrap_gspread_result(attr)
+
+        def wrapped(*args, **kwargs):
+            obj_name = self._obj.__class__.__name__
+            result = _retry(
+                lambda: attr(*args, **kwargs),
+                label=f"{obj_name}.{name}"
+            )
+            return _wrap_gspread_result(result)
+
+        return wrapped
+
+    def __setattr__(self, name, value):
+        setattr(self._obj, name, value)
+
+    def __repr__(self):
+        return repr(self._obj)
+
+
+def _gspread_client_with_retry(credentials):
+    # authorize() crea el cliente localmente. Desde aquí, todas sus
+    # operaciones HTTP quedan protegidas por el proxy.
+    return _GSpreadRetryProxy(gspread.authorize(credentials))
 
 
 TZ = ZoneInfo("America/Bogota")
@@ -92,7 +198,7 @@ def gc():
             "https://www.googleapis.com/auth/drive",
         ],
     )
-    return gspread.authorize(creds)
+    return _gspread_client_with_retry(creds)
 
 
 def gmail_service():
