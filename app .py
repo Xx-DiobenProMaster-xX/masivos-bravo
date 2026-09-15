@@ -2215,6 +2215,41 @@ def agregar_recordatorio_pab_a_cola(
 
 
 
+
+def reconstruir_html_pab_actual(referencia, id_plantilla, cuerpo_guardado=""):
+    """
+    Para envíos PaB siempre reconstruye el HTML con el diseño visual actual.
+    Esto evita que una fila antigua de COLA_ENVIO conserve y envíe el CUERPO viejo.
+    """
+    plantilla = str(id_plantilla or "").strip().upper()
+    if plantilla not in {"PAB000", "PAB003"}:
+        return str(cuerpo_guardado or "")
+
+    ref_objetivo = normalizar_referencia(referencia)
+    dias = 0 if plantilla == "PAB000" else 3
+
+    try:
+        if not pab.empty and "REFERENCIA" in pab.columns:
+            coincidencias = pab[
+                pab["REFERENCIA"].apply(normalizar_referencia) == ref_objetivo
+            ].copy()
+
+            if not coincidencias.empty:
+                fila_pab = coincidencias.iloc[0]
+                return html_pab_bravo(
+                    nombre=fila_pab.get("NOMBRE", ""),
+                    fecha_pab=fila_pab.get("FECHA_PAB", ""),
+                    valor_pab=fila_pab.get("VALOR_PAB", ""),
+                    dias=dias,
+                )
+    except Exception:
+        pass
+
+    # Si no se encuentra en PAB_PROXIMOS, no inventamos datos.
+    # Se conserva el cuerpo guardado para no romper otros flujos.
+    return str(cuerpo_guardado or "")
+
+
 def enviar_id_envio_gmail(id_envio, credenciales):
     """Envía exactamente una fila de COLA_ENVIO si continúa en BORRADOR."""
     if credenciales is None:
@@ -2228,8 +2263,9 @@ def enviar_id_envio_gmail(id_envio, credenciales):
 
     enc = [str(x).strip() for x in valores[0]]
     requeridas = [
-        "ID_ENVIO", "ID_CAMPAÑA", "EMAIL", "ASUNTO", "CUERPO", "ESTADO",
-        "FECHA_ENVIO", "INTENTOS", "ERROR", "ID_MENSAJE"
+        "ID_ENVIO", "ID_CAMPAÑA", "REFERENCIA", "EMAIL", "PLANTILLA",
+        "ASUNTO", "CUERPO", "ESTADO", "FECHA_ENVIO", "INTENTOS",
+        "ERROR", "ID_MENSAJE"
     ]
     faltan = [c for c in requeridas if c not in enc]
     if faltan:
@@ -2261,11 +2297,17 @@ def enviar_id_envio_gmail(id_envio, credenciales):
     hoja.update_cell(fila_num, idx["INTENTOS"] + 1, intentos + 1)
 
     try:
+        cuerpo_a_enviar = reconstruir_html_pab_actual(
+            referencia=val("REFERENCIA"),
+            id_plantilla=val("PLANTILLA"),
+            cuerpo_guardado=val("CUERPO"),
+        )
+
         r = enviar_mensaje_gmail(
             credenciales,
             val("EMAIL"),
             val("ASUNTO"),
-            val("CUERPO"),
+            cuerpo_a_enviar,
         )
         gmail_id = str(r.get("id", "")).strip()
         hoja.update_cell(
