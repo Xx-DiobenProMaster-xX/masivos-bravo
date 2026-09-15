@@ -71,12 +71,30 @@ def _retry(fn, label="", tries=10, base_sleep=1.5, jitter=0.6, max_sleep=45):
 
 
 def _wrap_gspread_result(value):
-    """Envuelve recursivamente objetos gspread; deja intactos datos normales."""
+    """
+    Envuelve únicamente objetos operativos de gspread.
+
+    IMPORTANTE: gspread devuelve algunos resultados de lectura (por ejemplo
+    ValueRange) como subclases de list cuyo módulo también empieza por
+    ``gspread``. Esos resultados SON datos y deben seguir siendo indexables,
+    iterables y compatibles con slices como rows[1:].
+    """
     if isinstance(value, _GSpreadRetryProxy):
         return value
 
+    # Nunca envolver datos/resultados. ValueRange hereda de list.
+    if isinstance(value, (list, tuple, dict, set, str, bytes, int, float, bool, type(None))):
+        return value
+
     module = getattr(value.__class__, "__module__", "")
-    if module.startswith("gspread"):
+    class_name = value.__class__.__name__
+
+    # Solo los objetos sobre los que luego hacemos nuevas requests HTTP.
+    if module.startswith("gspread") and class_name in {
+        "Client",
+        "Spreadsheet",
+        "Worksheet",
+    }:
         return _GSpreadRetryProxy(value)
 
     return value
