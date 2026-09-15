@@ -986,43 +986,40 @@ def obtener_hoja_externa(spreadsheet_id, nombre_hoja):
 
 def normalizar_referencia(valor):
     """
-    Convierte referencias provenientes de distintas hojas a una llave común.
+    Normaliza referencias sin destruir referencias alfanuméricas.
 
-    Ejemplos que terminan como 3115580892:
-    - 3115580892
-    - "3115580892"
-    - "3115580892.0"
-    - "3.115.580.892"
-    - "3,115,580,892"
-    - " 3115580892 "
+    Ejemplos:
+    - 3115580892 -> 3115580892
+    - "3115580892.0" -> 3115580892
+    - "3.115.580.892" -> 3115580892
+    - "TEST001" -> TEST001
     """
     if valor is None:
         return ""
 
     texto = str(valor).strip()
-
-    if not texto:
+    if not texto or texto.upper() in {"NAN", "NONE", "NULL"}:
         return ""
 
-    if texto.upper() in {"NAN", "NONE", "NULL"}:
-        return ""
-
-    # Quitar espacios normales y espacios no separables.
     texto = texto.replace("\xa0", "").replace(" ", "")
 
-    # Caso típico de Sheets/Pandas: 3115580892.0
+    # Referencias alfanuméricas: conservar letras y números.
+    # Esto es indispensable para referencias de prueba como TEST001.
+    if re.search(r"[A-Za-z]", texto):
+        return re.sub(r"[^A-Za-z0-9_-]", "", texto).upper()
+
+    # Caso típico Sheets/Pandas: 3115580892.0
     if re.fullmatch(r"[+-]?\d+\.0+", texto):
         return texto.split(".")[0].lstrip("+")
 
-    # Si es un entero con separadores de miles, quitarlos.
+    # Entero con separadores de miles.
     if re.fullmatch(r"[+-]?\d{1,3}([.,]\d{3})+", texto):
         return re.sub(r"[.,]", "", texto).lstrip("+")
 
-    # Si ya son solo dígitos, devolverlos.
     if re.fullmatch(r"[+-]?\d+", texto):
         return texto.lstrip("+")
 
-    # Intentar notación científica o número decimal exacto.
+    # Notación científica / decimal exacto.
     try:
         numero_ref = float(texto.replace(",", ""))
         if numero_ref.is_integer():
@@ -1030,10 +1027,8 @@ def normalizar_referencia(valor):
     except Exception:
         pass
 
-    # Último recurso: conservar solo dígitos.
-    # Esto permite empatar referencias con caracteres invisibles o separadores.
-    solo_digitos = re.sub(r"\D", "", texto)
-    return solo_digitos
+    # Último recurso: conservar caracteres útiles, no solamente dígitos.
+    return re.sub(r"[^A-Za-z0-9_-]", "", texto).upper()
 
 
 def valor_vacio(valor):
@@ -2372,6 +2367,7 @@ def preparar_clientes_campana(fila_campana):
         "duplicados": 0,
         "no_encontradas": 0,
     }
+
     if fila_campana is None:
         return pd.DataFrame(), resumen_vacio
 
@@ -2380,42 +2376,75 @@ def preparar_clientes_campana(fila_campana):
 
     base = clientes.copy()
 
-    # CLIENTES conserva los encabezados tal como están escritos en Sheets
-    # (por ejemplo: Referencia, Nombre, Email, Mora). Pandas distingue
-    # mayúsculas/minúsculas, por eso aquí los convertimos a nombres canónicos
-    # sin exigir cambios en Google Sheets.
+    if base is None or base.empty:
+        raise ValueError("La hoja CLIENTES está vacía.")
+
+    # CLIENTES tiene encabezados como Referencia, Nombre, Email, Saldo, Mora...
+    # Los llevamos a nombres internos canónicos SIN modificar Google Sheets.
     def _clave_columna(nombre):
-        texto = unicodedata.normalize("NFKD", str(nombre or ""))
-        texto = "".join(c for c in texto if not unicodedata.combining(c))
-        return re.sub(r"[^A-Z0-9]+", "_", texto.upper()).strip("_")
+        texto_col = unicodedata.normalize("NFKD", str(nombre or ""))
+        texto_col = "".join(c for c in texto_col if not unicodedata.combining(c))
+        return re.sub(r"[^A-Z0-9]+", "_", texto_col.upper()).strip("_")
 
     aliases = {
-        "REFERENCIA": {"REFERENCIA", "REFERENCE", "REF"},
-        "NOMBRE": {"NOMBRE", "NOMBRE_CLIENTE", "CLIENTE"},
-        "EMAIL": {"EMAIL", "CORREO", "CORREO_ELECTRONICO", "E_MAIL"},
-        "SALDO": {"SALDO", "SALDO_CLIENTE"},
-        "MORA": {"MORA", "MORA_STATUS", "STATUS_MORA", "ESTADO_MORA"},
-        "ENCARGADO": {"ENCARGADO", "PERSONA", "NEGOCIADOR", "RESPONSABLE"},
+        "REFERENCIA": ("REFERENCIA", "REFERENCE", "REF"),
+        "NOMBRE": ("NOMBRE", "NOMBRE_CLIENTE", "CLIENTE"),
+        "EMAIL": ("EMAIL", "CORREO", "CORREO_ELECTRONICO", "E_MAIL"),
+        "SALDO": ("SALDO", "SALDO_CLIENTE"),
+        "MORA": ("MORA", "MORA_STATUS", "STATUS_MORA", "ESTADO_MORA"),
+        "ENCARGADO": ("ENCARGADO", "PERSONA", "NEGOCIADOR", "RESPONSABLE"),
     }
-    columnas_por_clave = {_clave_columna(c): c for c in base.columns}
+
+    columnas_por_clave = {}
+    for columna_real in base.columns:
+        clave = _clave_columna(columna_real)
+        if clave and clave not in columnas_por_clave:
+            columnas_por_clave[clave] = columna_real
+
     for canonica, posibles in aliases.items():
         if canonica in base.columns:
             continue
-        origen = next((columnas_por_clave[p] for p in posibles if p in columnas_por_clave), None)
-        base[canonica] = base[origen] if origen is not None else ""
 
-    # Normalizamos primero para evitar que valores vacíos o formatos de Sheets
-    # rompan la construcción de destinatarios.
-    base["_REF"] = base["REFERENCIA"].apply(normalizar_referencia)
-    base = base[base["_REF"] != ""].copy()
+        origen = None
+        for posible in posibles:
+            if posible in columnas_por_clave:
+                origen = columnas_por_clave[posible]
+                break
+
+        if origen is not None:
+            base[canonica] = base[origen]
+        else:
+            base[canonica] = ""
+
+    if "REFERENCIA" not in base.columns:
+        raise ValueError(
+            "No pude identificar la columna Referencia de CLIENTES. "
+            f"Columnas encontradas: {', '.join(map(str, clientes.columns))}"
+        )
+
+    # Usamos una llave interna nueva y la recreamos explícitamente.
+    # Evita el KeyError '_REF' que estaba apareciendo en PERSONALIZADA.
+    base["_REFERENCIA_NORMALIZADA"] = (
+        base["REFERENCIA"]
+        .apply(normalizar_referencia)
+        .astype(str)
+        .str.strip()
+    )
+    base = base.loc[base["_REFERENCIA_NORMALIZADA"].ne("")].copy()
 
     no_encontradas = 0
+
     if tipo == "PERSONALIZADA":
         comentarios_guardados = str(fila_campana.get("COMENTARIOS", "") or "")
-        match_refs = re.search(r"\[REFS_PERSONALIZADAS:([^\]]*)\]", comentarios_guardados)
+        match_refs = re.search(
+            r"\[REFS_PERSONALIZADAS:([^\]]*)\]",
+            comentarios_guardados
+        )
         refs_txt = match_refs.group(1).strip() if match_refs else ""
+
         refs_solicitadas = []
         vistas = set()
+
         for parte in re.split(r"[\n,;\t ]+", refs_txt):
             ref = normalizar_referencia(parte)
             if ref and ref not in vistas:
@@ -2427,50 +2456,80 @@ def preparar_clientes_campana(fila_campana):
                 "Esta campaña PERSONALIZADA no tiene referencias guardadas."
             )
 
-        refs_en_base = set(base["_REF"].tolist())
-        no_encontradas = len([r for r in refs_solicitadas if r not in refs_en_base])
-        base = base[base["_REF"].isin(refs_solicitadas)].copy()
+        refs_en_base = set(base["_REFERENCIA_NORMALIZADA"].tolist())
+        no_encontradas = sum(
+            1 for ref in refs_solicitadas if ref not in refs_en_base
+        )
+
+        base = base.loc[
+            base["_REFERENCIA_NORMALIZADA"].isin(refs_solicitadas)
+        ].copy()
+
+        # Mantener el mismo orden en que se pegaron las referencias.
+        orden = {ref: i for i, ref in enumerate(refs_solicitadas)}
+        if not base.empty:
+            base["_ORDEN_PERSONALIZADA"] = (
+                base["_REFERENCIA_NORMALIZADA"].map(orden)
+            )
+            base = (
+                base.sort_values("_ORDEN_PERSONALIZADA")
+                .drop(columns=["_ORDEN_PERSONALIZADA"])
+                .copy()
+            )
 
     elif tipo in MAPA_PLANTILLAS_MORA:
         objetivo = normalizar(tipo).replace("_", " ")
-        base = base[
+        base = base.loc[
             base["MORA"].apply(
                 lambda x: normalizar(x).replace("_", " ") == objetivo
             )
         ].copy()
+
     else:
         raise ValueError(f"Tipo de campaña no soportado: {tipo}")
 
     total_base = len(base)
 
-    duplicados = entero_seguro(
-        base.duplicated(subset=["_REF"], keep="first").sum()
+    duplicados = int(
+        base.duplicated(
+            subset=["_REFERENCIA_NORMALIZADA"],
+            keep="first"
+        ).sum()
     )
-    base = base.drop_duplicates(subset=["_REF"], keep="first").copy()
+    base = base.drop_duplicates(
+        subset=["_REFERENCIA_NORMALIZADA"],
+        keep="first"
+    ).copy()
 
     mask_180 = base["MORA"].apply(es_mora_180)
-    n_mora_180 = entero_seguro(mask_180.sum())
-    base = base[~mask_180].copy()
+    n_mora_180 = int(mask_180.sum())
+    base = base.loc[~mask_180].copy()
 
     excluidas = referencias_excluidas_normalizadas()
-    mask_excl = base["_REF"].isin(excluidas)
-    n_excl = entero_seguro(mask_excl.sum())
-    base = base[~mask_excl].copy()
+    mask_excl = base["_REFERENCIA_NORMALIZADA"].isin(excluidas)
+    n_excl = int(mask_excl.sum())
+    base = base.loc[~mask_excl].copy()
 
     mask_sin_email = base["EMAIL"].apply(valor_vacio)
-    n_sin_email = entero_seguro(mask_sin_email.sum())
-    base = base[~mask_sin_email].copy()
+    n_sin_email = int(mask_sin_email.sum())
+    base = base.loc[~mask_sin_email].copy()
 
     plantilla = obtener_plantilla_generica(id_plantilla)
     if plantilla is None:
         raise ValueError(f"No encontré la plantilla {id_plantilla}.")
 
     base["ASUNTO_PREVIO"] = base.apply(
-        lambda f: reemplazar_variables_genericas(plantilla.get("ASUNTO", ""), f),
+        lambda f: reemplazar_variables_genericas(
+            plantilla.get("ASUNTO", ""),
+            f
+        ),
         axis=1
     )
     base["CUERPO_PREVIO"] = base.apply(
-        lambda f: reemplazar_variables_genericas(plantilla.get("CUERPO", ""), f),
+        lambda f: reemplazar_variables_genericas(
+            plantilla.get("CUERPO", ""),
+            f
+        ),
         axis=1
     )
 
