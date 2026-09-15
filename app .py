@@ -2190,6 +2190,7 @@ MAPA_PLANTILLAS_MORA = {
 }
 
 TIPOS_CAMPANA_MANUAL = [
+    "PRUEBA",
     "MORA_1",
     "MORA_30",
     "MORA_60",
@@ -2381,9 +2382,11 @@ def preparar_clientes_campana(fila_campana):
     tipo = str(fila_campana.get("FILTRO", "")).strip().upper()
     id_plantilla = str(fila_campana.get("PLANTILLA", "")).strip()
 
-    base = clientes.copy()
+    # PRUEBA usa EXCLUSIVAMENTE la hoja PRUEBAS. El resto usa CLIENTES.
+    # Así una prueba real nunca puede salir accidentalmente a la cartera.
+    base = pruebas.copy() if tipo == "PRUEBA" else clientes.copy()
 
-    # CLIENTES conserva los encabezados tal como están escritos en Sheets
+    # CLIENTES/PRUEBAS conservan los encabezados tal como están escritos en Sheets
     # (por ejemplo: Referencia, Nombre, Email, Mora). Pandas distingue
     # mayúsculas/minúsculas, por eso aquí los convertimos a nombres canónicos
     # sin exigir cambios en Google Sheets.
@@ -2434,6 +2437,11 @@ def preparar_clientes_campana(fila_campana):
         no_encontradas = len([r for r in refs_solicitadas if r not in refs_en_base])
         base = base[base["_REF"].isin(refs_solicitadas)].copy()
 
+    elif tipo == "PRUEBA":
+        # Todos los registros válidos de PRUEBAS entran en la vista previa.
+        # No se consulta CLIENTES para este tipo.
+        pass
+
     elif tipo in MAPA_PLANTILLAS_MORA:
         objetivo = normalizar(tipo).replace("_", " ")
         base = base[
@@ -2451,14 +2459,20 @@ def preparar_clientes_campana(fila_campana):
     )
     base = base.drop_duplicates(subset=["_REF"], keep="first").copy()
 
-    mask_180 = base["MORA"].apply(es_mora_180)
-    n_mora_180 = entero_seguro(mask_180.sum())
-    base = base[~mask_180].copy()
+    if tipo == "PRUEBA":
+        # PRUEBAS es una lista controlada de destinatarios internos/de prueba.
+        # No aplicamos Mora 180 ni Excluir_correo a datos sintéticos TESTxxx.
+        n_mora_180 = 0
+        n_excl = 0
+    else:
+        mask_180 = base["MORA"].apply(es_mora_180)
+        n_mora_180 = entero_seguro(mask_180.sum())
+        base = base[~mask_180].copy()
 
-    excluidas = referencias_excluidas_normalizadas()
-    mask_excl = base["_REF"].isin(excluidas)
-    n_excl = entero_seguro(mask_excl.sum())
-    base = base[~mask_excl].copy()
+        excluidas = referencias_excluidas_normalizadas()
+        mask_excl = base["_REF"].isin(excluidas)
+        n_excl = entero_seguro(mask_excl.sum())
+        base = base[~mask_excl].copy()
 
     mask_sin_email = base["EMAIL"].apply(valor_vacio)
     n_sin_email = entero_seguro(mask_sin_email.sum())
@@ -2992,6 +3006,13 @@ try:
 
     clientes = cargar_hoja(
         "CLIENTES"
+    )
+
+    # Destinatarios controlados para pruebas reales.
+    # Estructura esperada: REFERENCIA, NOMBRE, EMAIL, SALDO, MORA, ENCARGADO,
+    # EMAIL NEGOCIADOR, PLANTILLA.
+    pruebas = cargar_hoja(
+        "PRUEBAS"
     )
 
     campanas = cargar_hoja(
@@ -4883,6 +4904,7 @@ elif menu == "📧 Campañas":
         )
 
         es_personalizada = tipo_campana == "PERSONALIZADA"
+        es_prueba = tipo_campana == "PRUEBA"
         ids_plantillas = obtener_ids_plantillas_activas()
 
         with st.form("form_nueva_campana", clear_on_submit=False):
@@ -4892,9 +4914,13 @@ elif menu == "📧 Campañas":
                 nombre_campana = st.text_input(
                     "Nombre de la campaña",
                     placeholder=(
-                        "Ej. Seguimiento personalizado - septiembre"
-                        if es_personalizada
-                        else "Ej. Seguimiento Mora 30 - septiembre"
+                        "Ej. Prueba HTML T001"
+                        if es_prueba
+                        else (
+                            "Ej. Seguimiento personalizado - septiembre"
+                            if es_personalizada
+                            else "Ej. Seguimiento Mora 30 - septiembre"
+                        )
                     )
                 )
 
@@ -4908,26 +4934,37 @@ elif menu == "📧 Campañas":
                     value=AHORA.replace(second=0, microsecond=0).time()
                 )
 
-            if es_personalizada:
+            if es_personalizada or es_prueba:
                 if ids_plantillas:
                     plantilla_campana = st.selectbox(
                         "Plantilla",
                         ids_plantillas,
-                        help="Elige la plantilla que se usará para esta campaña personalizada."
+                        help=(
+                            "Elige la plantilla que quieres enviar a los destinatarios de PRUEBAS."
+                            if es_prueba
+                            else "Elige la plantilla que se usará para esta campaña personalizada."
+                        )
                     )
                 else:
                     plantilla_campana = ""
                     st.error("No encontré plantillas activas en PLANTILLAS.")
 
-                referencias_personalizadas = st.text_area(
-                    "Referencias de clientes",
-                    placeholder=(
-                        "Pega una referencia por línea. También puedes separarlas por coma.\n"
-                        "Ejemplo:\n3227405997\n3145427821\n3175113385"
-                    ),
-                    height=180,
-                    help="El sistema buscará nombre y correo en CLIENTES y aplicará las exclusiones antes de preparar."
-                )
+                if es_prueba:
+                    referencias_personalizadas = ""
+                    st.info(
+                        f"🧪 Esta campaña usará únicamente los {len(pruebas)} registros de la hoja PRUEBAS. "
+                        "Podrás revisar nombre, correo y asunto antes de preparar."
+                    )
+                else:
+                    referencias_personalizadas = st.text_area(
+                        "Referencias de clientes",
+                        placeholder=(
+                            "Pega una referencia por línea. También puedes separarlas por coma.\n"
+                            "Ejemplo:\n3227405997\n3145427821\n3175113385"
+                        ),
+                        height=180,
+                        help="El sistema buscará nombre y correo en CLIENTES y aplicará las exclusiones antes de preparar."
+                    )
             else:
                 plantilla_campana = MAPA_PLANTILLAS_MORA.get(tipo_campana, "")
                 st.text_input(
@@ -5016,7 +5053,12 @@ elif menu == "📧 Campañas":
                     try:
                         candidatos, resumen = preparar_clientes_campana(fila_sel)
 
-                        if tipo_sel == "PERSONALIZADA":
+                        if tipo_sel == "PRUEBA":
+                            r1, r2, r3 = st.columns(3)
+                            r1.metric("Destinatarios de prueba", len(candidatos))
+                            r2.metric("Sin correo", resumen.get("sin_email", 0))
+                            r3.metric("Duplicados", resumen.get("duplicados", 0))
+                        elif tipo_sel == "PERSONALIZADA":
                             r1, r2, r3, r4, r5, r6 = st.columns(6)
                             r1.metric("Elegibles", len(candidatos))
                             r2.metric("No encontradas", resumen.get("no_encontradas", 0))
