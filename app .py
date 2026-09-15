@@ -71,30 +71,12 @@ def _retry(fn, label="", tries=10, base_sleep=1.5, jitter=0.6, max_sleep=45):
 
 
 def _wrap_gspread_result(value):
-    """
-    Envuelve únicamente objetos operativos de gspread.
-
-    IMPORTANTE: gspread devuelve algunos resultados de lectura (por ejemplo
-    ValueRange) como subclases de list cuyo módulo también empieza por
-    ``gspread``. Esos resultados SON datos y deben seguir siendo indexables,
-    iterables y compatibles con slices como rows[1:].
-    """
+    """Envuelve recursivamente objetos gspread; deja intactos datos normales."""
     if isinstance(value, _GSpreadRetryProxy):
         return value
 
-    # Nunca envolver datos/resultados. ValueRange hereda de list.
-    if isinstance(value, (list, tuple, dict, set, str, bytes, int, float, bool, type(None))):
-        return value
-
     module = getattr(value.__class__, "__module__", "")
-    class_name = value.__class__.__name__
-
-    # Solo los objetos sobre los que luego hacemos nuevas requests HTTP.
-    if module.startswith("gspread") and class_name in {
-        "Client",
-        "Spreadsheet",
-        "Worksheet",
-    }:
+    if module.startswith("gspread"):
         return _GSpreadRetryProxy(value)
 
     return value
@@ -269,10 +251,31 @@ procesar_callback_oauth()
 GMAIL_FROM = "acuerdosRTD@resuelvetudeuda.com"
 GMAIL_REPLY_TO = "acuerdosRTD@resuelvetudeuda.com"
 
+BRAVO_LOGO_URL = "https://drive.google.com/uc?export=view&id=13kK3v4FiyXFa4UzM_au3TllhOhwjvWb7"
+BRAVO_WHATSAPP = "573012411885"
+BRAVO_WHATSAPP_DISPLAY = "301 241 1885"
+
+def _texto_a_html_bravo(texto):
+    import html as _html
+    t = str(texto or "").strip()
+    if not t: return ""
+    if re.search(r"<\\s*(p|div|br|strong|b|ul|ol|table|a)\\b", t, flags=re.I): return t
+    bloques = [x.strip() for x in re.split(r"\
+\\s*\
+", t) if x.strip()]
+    return "".join('<p style="margin:0 0 16px;line-height:1.65;color:#333b55;font-size:15px;">'+_html.escape(b).replace("\
+","<br>")+'</p>' for b in bloques)
+
+def envolver_html_bravo(cuerpo):
+    contenido = _texto_a_html_bravo(cuerpo)
+    return f"""<!doctype html><html><body style='margin:0;padding:0;background:#f3f4f8;font-family:Arial,Helvetica,sans-serif;'><table role='presentation' width='100%' cellspacing='0' cellpadding='0' style='background:#f3f4f8;padding:24px 10px;'><tr><td align='center'><table role='presentation' width='600' cellspacing='0' cellpadding='0' style='max-width:600px;width:100%;background:#fff;border-top:5px solid #3d2d8f;border-radius:6px;overflow:hidden;'><tr><td align='center' style='padding:24px 28px 14px;'><img src='{BRAVO_LOGO_URL}' alt='Bravo' width='115' style='display:block;max-width:115px;height:auto;'><div style='font-size:10px;color:#8b8f9b;margin-top:6px;'>Información importante sobre tu proceso</div></td></tr><tr><td style='border-top:1px solid #e8e8ee;padding:24px 34px 8px;'>{contenido}</td></tr><tr><td style='padding:8px 34px 26px;'><div style='border-top:1px solid #e5e5eb;margin-bottom:20px;'></div><a href='https://wa.me/{BRAVO_WHATSAPP}' style='background:#40318f;color:#fff;text-decoration:none;font-weight:bold;font-size:13px;padding:13px 18px;border-radius:4px;display:inline-block;margin-right:8px;'>Contactar a Bravo por WhatsApp</a><a href='mailto:{GMAIL_REPLY_TO}' style='border:1px solid #40318f;color:#40318f;text-decoration:none;font-weight:bold;font-size:13px;padding:12px 18px;border-radius:4px;display:inline-block;'>Contactar por correo</a></td></tr><tr><td style='background:#fafafa;padding:18px 34px;border-bottom:4px solid #27bfd0;color:#62677a;font-size:11px;line-height:1.6;'><b style='color:#3d2d8f;'>Bravo S.A.S.</b><br>WhatsApp: <a href='https://wa.me/{BRAVO_WHATSAPP}' style='color:#3d2d8f;'>{BRAVO_WHATSAPP_DISPLAY}</a><br>Lunes a viernes, 8:00 a.m. - 6:00 p.m.</td></tr></table></td></tr></table></body></html>"""
+
 def construir_mensaje_gmail(destinatario, asunto, cuerpo_html, remitente=GMAIL_FROM):
     destinatario = str(destinatario or "").strip()
     asunto = str(asunto or "").strip()
     cuerpo_html = str(cuerpo_html or "")
+    if "<html" not in cuerpo_html.lower() and "<!doctype" not in cuerpo_html.lower():
+        cuerpo_html = envolver_html_bravo(cuerpo_html)
     if not destinatario:
         raise ValueError("El envío no tiene EMAIL.")
     if not asunto:
@@ -986,40 +989,43 @@ def obtener_hoja_externa(spreadsheet_id, nombre_hoja):
 
 def normalizar_referencia(valor):
     """
-    Normaliza referencias sin destruir referencias alfanuméricas.
+    Convierte referencias provenientes de distintas hojas a una llave común.
 
-    Ejemplos:
-    - 3115580892 -> 3115580892
-    - "3115580892.0" -> 3115580892
-    - "3.115.580.892" -> 3115580892
-    - "TEST001" -> TEST001
+    Ejemplos que terminan como 3115580892:
+    - 3115580892
+    - "3115580892"
+    - "3115580892.0"
+    - "3.115.580.892"
+    - "3,115,580,892"
+    - " 3115580892 "
     """
     if valor is None:
         return ""
 
     texto = str(valor).strip()
-    if not texto or texto.upper() in {"NAN", "NONE", "NULL"}:
+
+    if not texto:
         return ""
 
+    if texto.upper() in {"NAN", "NONE", "NULL"}:
+        return ""
+
+    # Quitar espacios normales y espacios no separables.
     texto = texto.replace("\xa0", "").replace(" ", "")
 
-    # Referencias alfanuméricas: conservar letras y números.
-    # Esto es indispensable para referencias de prueba como TEST001.
-    if re.search(r"[A-Za-z]", texto):
-        return re.sub(r"[^A-Za-z0-9_-]", "", texto).upper()
-
-    # Caso típico Sheets/Pandas: 3115580892.0
+    # Caso típico de Sheets/Pandas: 3115580892.0
     if re.fullmatch(r"[+-]?\d+\.0+", texto):
         return texto.split(".")[0].lstrip("+")
 
-    # Entero con separadores de miles.
+    # Si es un entero con separadores de miles, quitarlos.
     if re.fullmatch(r"[+-]?\d{1,3}([.,]\d{3})+", texto):
         return re.sub(r"[.,]", "", texto).lstrip("+")
 
+    # Si ya son solo dígitos, devolverlos.
     if re.fullmatch(r"[+-]?\d+", texto):
         return texto.lstrip("+")
 
-    # Notación científica / decimal exacto.
+    # Intentar notación científica o número decimal exacto.
     try:
         numero_ref = float(texto.replace(",", ""))
         if numero_ref.is_integer():
@@ -1027,8 +1033,10 @@ def normalizar_referencia(valor):
     except Exception:
         pass
 
-    # Último recurso: conservar caracteres útiles, no solamente dígitos.
-    return re.sub(r"[^A-Za-z0-9_-]", "", texto).upper()
+    # Último recurso: conservar solo dígitos.
+    # Esto permite empatar referencias con caracteres invisibles o separadores.
+    solo_digitos = re.sub(r"\D", "", texto)
+    return solo_digitos
 
 
 def valor_vacio(valor):
@@ -2182,7 +2190,6 @@ MAPA_PLANTILLAS_MORA = {
 }
 
 TIPOS_CAMPANA_MANUAL = [
-    "PRUEBA",
     "MORA_1",
     "MORA_30",
     "MORA_60",
@@ -2368,90 +2375,50 @@ def preparar_clientes_campana(fila_campana):
         "duplicados": 0,
         "no_encontradas": 0,
     }
-
     if fila_campana is None:
         return pd.DataFrame(), resumen_vacio
 
     tipo = str(fila_campana.get("FILTRO", "")).strip().upper()
     id_plantilla = str(fila_campana.get("PLANTILLA", "")).strip()
 
-    if tipo == "PRUEBA":
-        base = pruebas.copy()
-        if base is None or base.empty:
-            raise ValueError("La hoja PRUEBAS está vacía.")
-        nombre_hoja_base = "PRUEBAS"
-    else:
-        base = clientes.copy()
-        if base is None or base.empty:
-            raise ValueError("La hoja CLIENTES está vacía.")
-        nombre_hoja_base = "CLIENTES"
+    base = clientes.copy()
 
-    # CLIENTES tiene encabezados como Referencia, Nombre, Email, Saldo, Mora...
-    # Los llevamos a nombres internos canónicos SIN modificar Google Sheets.
+    # CLIENTES conserva los encabezados tal como están escritos en Sheets
+    # (por ejemplo: Referencia, Nombre, Email, Mora). Pandas distingue
+    # mayúsculas/minúsculas, por eso aquí los convertimos a nombres canónicos
+    # sin exigir cambios en Google Sheets.
     def _clave_columna(nombre):
-        texto_col = unicodedata.normalize("NFKD", str(nombre or ""))
-        texto_col = "".join(c for c in texto_col if not unicodedata.combining(c))
-        return re.sub(r"[^A-Z0-9]+", "_", texto_col.upper()).strip("_")
+        texto = unicodedata.normalize("NFKD", str(nombre or ""))
+        texto = "".join(c for c in texto if not unicodedata.combining(c))
+        return re.sub(r"[^A-Z0-9]+", "_", texto.upper()).strip("_")
 
     aliases = {
-        "REFERENCIA": ("REFERENCIA", "REFERENCE", "REF"),
-        "NOMBRE": ("NOMBRE", "NOMBRE_CLIENTE", "CLIENTE"),
-        "EMAIL": ("EMAIL", "CORREO", "CORREO_ELECTRONICO", "E_MAIL"),
-        "SALDO": ("SALDO", "SALDO_CLIENTE"),
-        "MORA": ("MORA", "MORA_STATUS", "STATUS_MORA", "ESTADO_MORA"),
-        "ENCARGADO": ("ENCARGADO", "PERSONA", "NEGOCIADOR", "RESPONSABLE"),
+        "REFERENCIA": {"REFERENCIA", "REFERENCE", "REF"},
+        "NOMBRE": {"NOMBRE", "NOMBRE_CLIENTE", "CLIENTE"},
+        "EMAIL": {"EMAIL", "CORREO", "CORREO_ELECTRONICO", "E_MAIL"},
+        "SALDO": {"SALDO", "SALDO_CLIENTE"},
+        "MORA": {"MORA", "MORA_STATUS", "STATUS_MORA", "ESTADO_MORA"},
+        "ENCARGADO": {"ENCARGADO", "PERSONA", "NEGOCIADOR", "RESPONSABLE"},
     }
-
-    columnas_por_clave = {}
-    for columna_real in base.columns:
-        clave = _clave_columna(columna_real)
-        if clave and clave not in columnas_por_clave:
-            columnas_por_clave[clave] = columna_real
-
+    columnas_por_clave = {_clave_columna(c): c for c in base.columns}
     for canonica, posibles in aliases.items():
         if canonica in base.columns:
             continue
+        origen = next((columnas_por_clave[p] for p in posibles if p in columnas_por_clave), None)
+        base[canonica] = base[origen] if origen is not None else ""
 
-        origen = None
-        for posible in posibles:
-            if posible in columnas_por_clave:
-                origen = columnas_por_clave[posible]
-                break
-
-        if origen is not None:
-            base[canonica] = base[origen]
-        else:
-            base[canonica] = ""
-
-    if "REFERENCIA" not in base.columns:
-        raise ValueError(
-            f"No pude identificar la columna Referencia de {nombre_hoja_base}. "
-            f"Columnas encontradas: {', '.join(map(str, base.columns))}"
-        )
-
-    # Usamos una llave interna nueva y la recreamos explícitamente.
-    # Evita el KeyError '_REF' que estaba apareciendo en PERSONALIZADA.
-    base["_REFERENCIA_NORMALIZADA"] = (
-        base["REFERENCIA"]
-        .apply(normalizar_referencia)
-        .astype(str)
-        .str.strip()
-    )
-    base = base.loc[base["_REFERENCIA_NORMALIZADA"].ne("")].copy()
+    # Normalizamos primero para evitar que valores vacíos o formatos de Sheets
+    # rompan la construcción de destinatarios.
+    base["_REF"] = base["REFERENCIA"].apply(normalizar_referencia)
+    base = base[base["_REF"] != ""].copy()
 
     no_encontradas = 0
-
     if tipo == "PERSONALIZADA":
         comentarios_guardados = str(fila_campana.get("COMENTARIOS", "") or "")
-        match_refs = re.search(
-            r"\[REFS_PERSONALIZADAS:([^\]]*)\]",
-            comentarios_guardados
-        )
+        match_refs = re.search(r"\[REFS_PERSONALIZADAS:([^\]]*)\]", comentarios_guardados)
         refs_txt = match_refs.group(1).strip() if match_refs else ""
-
         refs_solicitadas = []
         vistas = set()
-
         for parte in re.split(r"[\n,;\t ]+", refs_txt):
             ref = normalizar_referencia(parte)
             if ref and ref not in vistas:
@@ -2463,87 +2430,50 @@ def preparar_clientes_campana(fila_campana):
                 "Esta campaña PERSONALIZADA no tiene referencias guardadas."
             )
 
-        refs_en_base = set(base["_REFERENCIA_NORMALIZADA"].tolist())
-        no_encontradas = sum(
-            1 for ref in refs_solicitadas if ref not in refs_en_base
-        )
-
-        base = base.loc[
-            base["_REFERENCIA_NORMALIZADA"].isin(refs_solicitadas)
-        ].copy()
-
-        # Mantener el mismo orden en que se pegaron las referencias.
-        orden = {ref: i for i, ref in enumerate(refs_solicitadas)}
-        if not base.empty:
-            base["_ORDEN_PERSONALIZADA"] = (
-                base["_REFERENCIA_NORMALIZADA"].map(orden)
-            )
-            base = (
-                base.sort_values("_ORDEN_PERSONALIZADA")
-                .drop(columns=["_ORDEN_PERSONALIZADA"])
-                .copy()
-            )
-
-    elif tipo == "PRUEBA":
-        # PRUEBA toma exclusivamente los registros de la hoja PRUEBAS.
-        # Luego siguen aplicando las mismas barreras de seguridad:
-        # deduplicado, Mora 180, Excluir_correo y correo obligatorio.
-        pass
+        refs_en_base = set(base["_REF"].tolist())
+        no_encontradas = len([r for r in refs_solicitadas if r not in refs_en_base])
+        base = base[base["_REF"].isin(refs_solicitadas)].copy()
 
     elif tipo in MAPA_PLANTILLAS_MORA:
         objetivo = normalizar(tipo).replace("_", " ")
-        base = base.loc[
+        base = base[
             base["MORA"].apply(
                 lambda x: normalizar(x).replace("_", " ") == objetivo
             )
         ].copy()
-
     else:
         raise ValueError(f"Tipo de campaña no soportado: {tipo}")
 
     total_base = len(base)
 
     duplicados = entero_seguro(
-        base.duplicated(
-            subset=["_REFERENCIA_NORMALIZADA"],
-            keep="first"
-        ).sum(),
-        0
+        base.duplicated(subset=["_REF"], keep="first").sum()
     )
-    base = base.drop_duplicates(
-        subset=["_REFERENCIA_NORMALIZADA"],
-        keep="first"
-    ).copy()
+    base = base.drop_duplicates(subset=["_REF"], keep="first").copy()
 
     mask_180 = base["MORA"].apply(es_mora_180)
-    n_mora_180 = entero_seguro(mask_180.sum(), 0)
-    base = base.loc[~mask_180].copy()
+    n_mora_180 = entero_seguro(mask_180.sum())
+    base = base[~mask_180].copy()
 
     excluidas = referencias_excluidas_normalizadas()
-    mask_excl = base["_REFERENCIA_NORMALIZADA"].isin(excluidas)
-    n_excl = entero_seguro(mask_excl.sum(), 0)
-    base = base.loc[~mask_excl].copy()
+    mask_excl = base["_REF"].isin(excluidas)
+    n_excl = entero_seguro(mask_excl.sum())
+    base = base[~mask_excl].copy()
 
     mask_sin_email = base["EMAIL"].apply(valor_vacio)
-    n_sin_email = entero_seguro(mask_sin_email.sum(), 0)
-    base = base.loc[~mask_sin_email].copy()
+    n_sin_email = entero_seguro(mask_sin_email.sum())
+    base = base[~mask_sin_email].copy()
 
     plantilla = obtener_plantilla_generica(id_plantilla)
     if plantilla is None:
         raise ValueError(f"No encontré la plantilla {id_plantilla}.")
 
     base["ASUNTO_PREVIO"] = base.apply(
-        lambda f: reemplazar_variables_genericas(
-            plantilla.get("ASUNTO", ""),
-            f
-        ),
+        lambda f: reemplazar_variables_genericas(plantilla.get("ASUNTO", ""), f),
         axis=1
     )
     base["CUERPO_PREVIO"] = base.apply(
-        lambda f: reemplazar_variables_genericas(
-            plantilla.get("CUERPO", ""),
-            f
-        ),
+        lambda f: reemplazar_variables_genericas(plantilla.get("CUERPO", ""), f),
         axis=1
     )
 
@@ -2683,94 +2613,45 @@ def _actualizar_campos_campana(id_campana, cambios):
 
 def programar_campana_segura(id_campana):
     """
-    Marca una campaña PREPARADA como PROGRAMADA sin volver a leer Google Sheets.
-
-    IMPORTANTE:
-    - Usa los DataFrames `campanas` y `cola` ya cargados por Streamlit.
-    - Hace UNA sola escritura a CAMPAÑAS.
-    - COLA_ENVIO permanece en BORRADOR.
-    - No envía correos.
+    Marca la CAMPAÑA como PROGRAMADA, pero mantiene TODOS sus correos en
+    COLA_ENVIO como BORRADOR. Por diseño, esta función NO habilita envíos.
     """
-    id_buscar = str(id_campana).strip()
-
-    if campanas is None or campanas.empty:
-        raise ValueError("No hay datos de CAMPAÑAS cargados.")
-
-    if "ID_CAMPAÑA" not in campanas.columns or "ESTADO" not in campanas.columns:
-        raise ValueError("CAMPAÑAS no tiene ID_CAMPAÑA o ESTADO.")
-
-    mask_camp = (
-        campanas["ID_CAMPAÑA"]
-        .astype(str)
-        .str.strip()
-        .eq(id_buscar)
-    )
-
-    if not mask_camp.any():
-        raise ValueError("No encontré la campaña seleccionada en CAMPAÑAS.")
-
-    # El índice del DataFrame conserva la posición original de la hoja:
-    # índice 0 = fila 2 de Google Sheets.
-    idx_df = campanas.index[mask_camp][0]
-    fila_camp = campanas.loc[idx_df]
-
-    estado = str(fila_camp.get("ESTADO", "")).strip().upper()
+    fila = fila_campana_por_id(id_campana)
+    if fila is None:
+        raise ValueError("No encontré la campaña seleccionada.")
+    estado = str(fila.get("ESTADO", "")).strip().upper()
     if estado != "PREPARADA":
-        raise ValueError(
-            f"Solo una campaña PREPARADA puede programarse. Estado actual: {estado or 'VACÍO'}."
-        )
+        raise ValueError("Solo una campaña PREPARADA puede programarse.")
 
-    if cola is None or cola.empty:
+    # Verificar que existan correos preparados y que ninguno deje BORRADOR.
+    archivo = obtener_archivo()
+    hoja_cola = archivo.worksheet("COLA_ENVIO")
+    valores = hoja_cola.get_all_values()
+    if not valores:
         raise ValueError("COLA_ENVIO está vacía.")
-
-    if "ID_CAMPAÑA" not in cola.columns or "ESTADO" not in cola.columns:
+    encabezados = [str(x).strip() for x in valores[0]]
+    if "ID_CAMPAÑA" not in encabezados or "ESTADO" not in encabezados:
         raise ValueError("COLA_ENVIO no tiene ID_CAMPAÑA o ESTADO.")
-
-    filas_camp = cola.loc[
-        cola["ID_CAMPAÑA"]
-        .astype(str)
-        .str.strip()
-        .eq(id_buscar)
-    ].copy()
-
-    if filas_camp.empty:
+    i_camp = encabezados.index("ID_CAMPAÑA")
+    i_estado = encabezados.index("ESTADO")
+    filas_camp = [
+        f for f in valores[1:]
+        if len(f) > i_camp and str(f[i_camp]).strip() == str(id_campana).strip()
+    ]
+    if not filas_camp:
         raise ValueError("La campaña no tiene correos preparados en COLA_ENVIO.")
-
-    estados = (
-        filas_camp["ESTADO"]
-        .fillna("")
-        .astype(str)
-        .str.strip()
-        .str.upper()
-    )
-
-    estados_no_seguros = sorted(
-        set(estados.tolist()) - {"BORRADOR"}
-    )
-
+    estados_no_seguros = {
+        str(f[i_estado]).strip().upper()
+        for f in filas_camp if len(f) > i_estado
+    } - {"BORRADOR"}
     if estados_no_seguros:
         raise ValueError(
             "Hay correos de esta campaña fuera de BORRADOR: "
-            + ", ".join(estados_no_seguros)
+            + ", ".join(sorted(estados_no_seguros))
         )
 
-    # UNA SOLA ESCRITURA. No hacemos get_all_values(), get(), ni nuevas
-    # lecturas de CAMPAÑAS/COLA_ENVIO durante la programación.
-    hoja_camp = obtener_archivo().worksheet("CAMPAÑAS")
-    columna_estado = list(campanas.columns).index("ESTADO") + 1
-    numero_fila_sheet = int(idx_df) + 2
-
-    hoja_camp.update_cell(
-        numero_fila_sheet,
-        columna_estado,
-        "PROGRAMADA"
-    )
-
-    # Mantener también el estado local coherente durante este rerun.
-    campanas.at[idx_df, "ESTADO"] = "PROGRAMADA"
-
-    # NO hacemos st.cache_data.clear() aquí: eso dispararía inmediatamente
-    # nuevas lecturas masivas y podría provocar otro 429.
+    _actualizar_campos_campana(id_campana, {"ESTADO": "PROGRAMADA"})
+    st.cache_data.clear()
     return len(filas_camp)
 
 
@@ -3111,10 +2992,6 @@ try:
 
     clientes = cargar_hoja(
         "CLIENTES"
-    )
-
-    pruebas = cargar_hoja(
-        "PRUEBAS"
     )
 
     campanas = cargar_hoja(
@@ -5006,7 +4883,6 @@ elif menu == "📧 Campañas":
         )
 
         es_personalizada = tipo_campana == "PERSONALIZADA"
-        es_prueba = tipo_campana == "PRUEBA"
         ids_plantillas = obtener_ids_plantillas_activas()
 
         with st.form("form_nueva_campana", clear_on_submit=False):
@@ -5051,21 +4927,6 @@ elif menu == "📧 Campañas":
                     ),
                     height=180,
                     help="El sistema buscará nombre y correo en CLIENTES y aplicará las exclusiones antes de preparar."
-                )
-            elif es_prueba:
-                if ids_plantillas:
-                    plantilla_campana = st.selectbox(
-                        "Plantilla",
-                        ids_plantillas,
-                        help="La prueba usará exclusivamente los destinatarios de la hoja PRUEBAS."
-                    )
-                else:
-                    plantilla_campana = ""
-                    st.error("No encontré plantillas activas en PLANTILLAS.")
-                referencias_personalizadas = ""
-                st.info(
-                    "🧪 Esta campaña tomará únicamente los registros de la hoja PRUEBAS. "
-                    "Mora 180, Excluir_correo y filas sin email seguirán bloqueándose."
                 )
             else:
                 plantilla_campana = MAPA_PLANTILLAS_MORA.get(tipo_campana, "")
@@ -5302,8 +5163,6 @@ elif menu == "📧 Campañas":
 
                     except Exception as e:
                         st.error(f"❌ No pude construir los destinatarios: {e}")
-                        with st.expander("🔎 Ver detalle técnico"):
-                            st.exception(e)
 
     with tab_historial:
         st.subheader("Panel de campañas")
