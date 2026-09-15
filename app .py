@@ -412,8 +412,9 @@ def procesar_campanas_programadas_gmail(credenciales, limite=100):
 
     enc = [str(x).strip() for x in valores[0]]
     requeridas = {
-        "ID_ENVIO", "ID_CAMPAÑA", "EMAIL", "ASUNTO", "CUERPO", "ESTADO",
-        "FECHA_PROG", "FECHA_ENVIO", "INTENTOS", "ERROR", "ID_MENSAJE"
+        "ID_ENVIO", "ID_CAMPAÑA", "REFERENCIA", "EMAIL", "PLANTILLA",
+        "ASUNTO", "CUERPO", "ESTADO", "FECHA_PROG", "FECHA_ENVIO",
+        "INTENTOS", "ERROR", "ID_MENSAJE"
     }
     faltan = requeridas - set(enc)
     if faltan:
@@ -453,6 +454,19 @@ def procesar_campanas_programadas_gmail(credenciales, limite=100):
         email = val("EMAIL")
         asunto = val("ASUNTO")
         cuerpo = val("CUERPO")
+
+        # IMPORTANTE: PaB nunca usa a ciegas el CUERPO histórico de COLA_ENVIO.
+        # Si la plantilla es PAB000/PAB003, reconstruimos el HTML con el diseño
+        # visual actual y los datos vigentes de PAB_PROXIMOS antes de enviarlo.
+        plantilla_envio = val("PLANTILLA").upper() if "PLANTILLA" in idx else ""
+        referencia_envio = val("REFERENCIA") if "REFERENCIA" in idx else ""
+        if plantilla_envio in {"PAB000", "PAB003"}:
+            cuerpo = reconstruir_html_pab_actual(
+                referencia=referencia_envio,
+                id_plantilla=plantilla_envio,
+                cuerpo_guardado=cuerpo,
+            )
+
         id_envio = val("ID_ENVIO")
         intentos_previos = entero_seguro(val("INTENTOS"), 0)
 
