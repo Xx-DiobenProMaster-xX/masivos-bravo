@@ -2454,6 +2454,178 @@ def cancelar_preparacion_campana(id_campana):
     return eliminadas
 
 
+
+def borrar_campana_segura(id_campana):
+    """
+    Borra completamente una campaña de prueba y sus filas de COLA_ENVIO
+    SOLO si no existe ningún correo ENVIADO/ENVIANDO/ERROR u otro estado
+    distinto de BORRADOR. Sirve para limpiar BORRADOR, PREPARADA o PROGRAMADA.
+    """
+    fila = fila_campana_por_id(id_campana)
+    if fila is None:
+        raise ValueError("No encontré la campaña seleccionada.")
+
+    estado = str(fila.get("ESTADO", "")).strip().upper()
+    if estado not in {"BORRADOR", "PREPARADA", "PROGRAMADA"}:
+        raise ValueError(
+            "Solo se pueden borrar campañas BORRADOR, PREPARADA o PROGRAMADA."
+        )
+
+    archivo = obtener_archivo()
+    hoja_cola = archivo.worksheet("COLA_ENVIO")
+    valores_cola = hoja_cola.get_all_values()
+    filas_borrar_cola = []
+
+    if valores_cola:
+        enc_cola = [str(x).strip() for x in valores_cola[0]]
+        if "ID_CAMPAÑA" in enc_cola:
+            i_camp = enc_cola.index("ID_CAMPAÑA")
+            i_estado = enc_cola.index("ESTADO") if "ESTADO" in enc_cola else None
+            bloqueantes = set()
+
+            for numero_fila, f in enumerate(valores_cola[1:], start=2):
+                camp = str(f[i_camp] if len(f) > i_camp else "").strip()
+                if camp != str(id_campana).strip():
+                    continue
+
+                est = (
+                    str(f[i_estado] if i_estado is not None and len(f) > i_estado else "")
+                    .strip().upper()
+                )
+                if est in {"", "BORRADOR"}:
+                    filas_borrar_cola.append(numero_fila)
+                else:
+                    bloqueantes.add(est)
+
+            if bloqueantes:
+                raise ValueError(
+                    "No puedo borrar esta campaña porque tiene correos fuera de BORRADOR: "
+                    + ", ".join(sorted(bloqueantes))
+                )
+
+    # Primero retirar la cola.
+    for numero_fila in reversed(filas_borrar_cola):
+        hoja_cola.delete_rows(numero_fila)
+
+    # Luego borrar la fila de CAMPAÑAS.
+    hoja_camp = archivo.worksheet("CAMPAÑAS")
+    numero_fila_camp, _ = _buscar_fila_campana_en_sheet(hoja_camp, id_campana)
+    hoja_camp.delete_rows(numero_fila_camp)
+
+    st.cache_data.clear()
+    return len(filas_borrar_cola)
+
+
+def enviar_campana_ahora_gmail(id_campana, credenciales):
+    """
+    Envía SOLO la campaña indicada. Requiere estado PROGRAMADA y que todas
+    sus filas pendientes estén todavía en BORRADOR. La fecha programada no
+    limita este botón: es una orden manual explícita de 'Enviar ahora'.
+    """
+    if credenciales is None:
+        raise ValueError(
+            "Gmail no está conectado en esta sesión. Ve a Configuración y conecta Google."
+        )
+
+    fila = fila_campana_por_id(id_campana)
+    if fila is None:
+        raise ValueError("No encontré la campaña seleccionada.")
+
+    estado_camp = str(fila.get("ESTADO", "")).strip().upper()
+    if estado_camp != "PROGRAMADA":
+        raise ValueError("Solo una campaña PROGRAMADA puede enviarse.")
+
+    archivo = obtener_archivo()
+    hoja = archivo.worksheet("COLA_ENVIO")
+    valores = hoja.get_all_values()
+    if len(valores) <= 1:
+        raise ValueError("COLA_ENVIO está vacía.")
+
+    enc = [str(x).strip() for x in valores[0]]
+    requeridas = {
+        "ID_ENVIO", "ID_CAMPAÑA", "EMAIL", "ASUNTO", "CUERPO", "ESTADO",
+        "FECHA_ENVIO", "INTENTOS", "ERROR", "ID_MENSAJE"
+    }
+    faltan = requeridas - set(enc)
+    if faltan:
+        raise ValueError("Faltan columnas en COLA_ENVIO: " + ", ".join(sorted(faltan)))
+
+    idx = {c: enc.index(c) for c in requeridas}
+    filas_objetivo = []
+
+    for numero_fila, f in enumerate(valores[1:], start=2):
+        camp = str(f[idx["ID_CAMPAÑA"]] if len(f) > idx["ID_CAMPAÑA"] else "").strip()
+        if camp != str(id_campana).strip():
+            continue
+        est = str(f[idx["ESTADO"]] if len(f) > idx["ESTADO"] else "").strip().upper()
+        if est == "BORRADOR":
+            filas_objetivo.append((numero_fila, f))
+        elif est in {"ENVIADO", "ERROR", "BLOQUEADO"}:
+            # Ya procesados: no se vuelven a enviar.
+            continue
+        else:
+            raise ValueError(
+                f"La campaña contiene una fila en estado {est or 'VACÍO'}; "
+                "no iniciaré el envío para evitar duplicados."
+            )
+
+    if not filas_objetivo:
+        raise ValueError("No hay correos BORRADOR pendientes para esta campaña.")
+
+    _actualizar_campos_campana(id_campana, {"ESTADO": "EN PROCESO"})
+
+    enviados = 0
+    errores = 0
+    detalle = []
+
+    for numero_fila, f in filas_objetivo:
+        def val(c):
+            i = idx[c]
+            return str(f[i] if len(f) > i else "").strip()
+
+        id_envio = val("ID_ENVIO")
+        email = val("EMAIL")
+        asunto = val("ASUNTO")
+        cuerpo = val("CUERPO")
+        intentos_previos = entero_seguro(val("INTENTOS"), 0)
+
+        # Reserva la fila antes de Gmail para impedir doble envío concurrente.
+        hoja.update_cell(numero_fila, idx["ESTADO"] + 1, "ENVIANDO")
+        hoja.update_cell(numero_fila, idx["INTENTOS"] + 1, intentos_previos + 1)
+
+        try:
+            respuesta = enviar_mensaje_gmail(
+                credenciales=credenciales,
+                destinatario=email,
+                asunto=asunto,
+                cuerpo_html=cuerpo,
+            )
+            gmail_id = str(respuesta.get("id", "")).strip()
+            fecha_envio = datetime.now(TZ).strftime("%d/%m/%Y %H:%M:%S")
+
+            hoja.update_cell(numero_fila, idx["FECHA_ENVIO"] + 1, fecha_envio)
+            hoja.update_cell(numero_fila, idx["ID_MENSAJE"] + 1, gmail_id)
+            hoja.update_cell(numero_fila, idx["ERROR"] + 1, "")
+            hoja.update_cell(numero_fila, idx["ESTADO"] + 1, "ENVIADO")
+            enviados += 1
+            detalle.append({"EMAIL": email, "RESULTADO": "ENVIADO"})
+        except Exception as e:
+            hoja.update_cell(numero_fila, idx["ERROR"] + 1, str(e)[:500])
+            hoja.update_cell(numero_fila, idx["ESTADO"] + 1, "ERROR")
+            errores += 1
+            detalle.append({"EMAIL": email, "RESULTADO": f"ERROR: {e}"})
+
+    _recalcular_campana_desde_cola(id_campana)
+    st.cache_data.clear()
+
+    return {
+        "enviados": enviados,
+        "errores": errores,
+        "detalle": detalle,
+    }
+
+
+
 # ============================================================
 # ESCRITURA RESPUESTAS
 # ============================================================
@@ -4375,7 +4547,7 @@ elif menu == "📧 Campañas":
         unsafe_allow_html=True
     )
     st.markdown(
-        '<div class="subtitulo">Crea, revisa y prepara campañas manuales sin enviar correos automáticamente</div>',
+        '<div class="subtitulo">Crea, revisa, programa y envía campañas manuales desde un flujo controlado</div>',
         unsafe_allow_html=True
     )
 
@@ -4685,7 +4857,7 @@ elif menu == "📧 Campañas":
         st.subheader("Panel de campañas")
         st.caption(
             "Consulta el estado operativo de cada campaña y sus destinatarios. "
-            "Este panel es solo de control: no activa envíos."
+            "Desde el detalle puedes eliminar campañas de prueba o enviar manualmente una campaña PROGRAMADA."
         )
 
         if campanas.empty:
@@ -4876,10 +5048,82 @@ elif menu == "📧 Campañas":
                     st.info("➡️ Acción disponible: programar o cancelar la preparación.")
                 elif estado_detalle == "PROGRAMADA":
                     st.success(
-                        "🗓️ Campaña programada. Por seguridad, los correos siguen en BORRADOR y no se enviarán."
+                        "🗓️ Campaña PROGRAMADA y lista. Puedes enviarla manualmente desde este panel."
                     )
+
+                    cred_panel = credenciales_gmail_sesion()
+                    if cred_panel is None:
+                        st.warning(
+                            "Gmail no está conectado en esta sesión. Ve a ⚙️ Configuración, "
+                            "conecta Google y vuelve a Campañas."
+                        )
+                    else:
+                        total_borradores = int(detalle.get("BORRADORES_PANEL", 0) or 0)
+                        st.warning(
+                            f"📨 ENVIAR AHORA enviará {total_borradores} correo(s) reales "
+                            "de esta campaña, aunque la hora programada todavía no haya llegado."
+                        )
+                        confirmar_envio = st.checkbox(
+                            f"Confirmo el envío real de la campaña {id_detalle}",
+                            key=f"confirmar_envio_real_{id_detalle}"
+                        )
+                        if st.button(
+                            "📨 ENVIAR AHORA",
+                            type="primary",
+                            use_container_width=True,
+                            disabled=not confirmar_envio,
+                            key=f"enviar_ahora_{id_detalle}"
+                        ):
+                            try:
+                                with st.spinner("Enviando campaña..."):
+                                    resultado = enviar_campana_ahora_gmail(
+                                        id_detalle,
+                                        cred_panel
+                                    )
+                                st.success(
+                                    f"✅ Campaña procesada: {resultado['enviados']} enviados, "
+                                    f"{resultado['errores']} errores."
+                                )
+                                if resultado["detalle"]:
+                                    st.dataframe(
+                                        pd.DataFrame(resultado["detalle"]),
+                                        use_container_width=True,
+                                        hide_index=True
+                                    )
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ No se pudo enviar la campaña: {e}")
+
                 elif estado_detalle in {"FINALIZADA", "FINALIZADA CON ERRORES"}:
                     st.success("✅ Campaña cerrada.")
+
+                # Limpieza segura de campañas de prueba.
+                if estado_detalle in {"BORRADOR", "PREPARADA", "PROGRAMADA"}:
+                    st.markdown("---")
+                    st.markdown("#### 🗑️ Eliminar campaña de prueba")
+                    st.caption(
+                        "Elimina la campaña y sus filas BORRADOR de COLA_ENVIO. "
+                        "Por seguridad se bloquea si existe cualquier correo ya procesado."
+                    )
+                    confirmar_borrado = st.checkbox(
+                        f"Confirmo que quiero eliminar definitivamente {id_detalle}",
+                        key=f"confirmar_borrado_camp_{id_detalle}"
+                    )
+                    if st.button(
+                        "🗑️ Eliminar campaña",
+                        use_container_width=True,
+                        disabled=not confirmar_borrado,
+                        key=f"borrar_camp_{id_detalle}"
+                    ):
+                        try:
+                            retiradas = borrar_campana_segura(id_detalle)
+                            st.success(
+                                f"🗑️ Campaña eliminada. Se retiraron {retiradas} "
+                                "fila(s) de COLA_ENVIO."
+                            )
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ No se pudo eliminar: {e}")
 
 
 # ============================================================
