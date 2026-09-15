@@ -1,5 +1,6 @@
 
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 import gspread
 from gspread.exceptions import APIError
@@ -869,106 +870,38 @@ def fecha_larga_pab(valor):
 
 
 def html_pab_bravo(nombre, fecha_pab, valor_pab, dias):
-    """Correo visual exclusivo para PaB, compatible con Gmail/Outlook."""
+    """Correo PaB inspirado en la pieza visual Bravo, construido en HTML dinámico."""
     import html as _html
-
     nombre = _html.escape(str(nombre or "Cliente").strip() or "Cliente")
-    fecha_txt = _html.escape(fecha_larga_pab(fecha_pab))
+    fecha_txt = _html.escape(fecha_larga_pab(fecha_pab) or "Fecha por confirmar")
     valor_txt = _html.escape(moneda(numero(valor_pab)))
-
-    if int(dias) == 0:
-        titulo_1 = "Tu pago a banco"
-        titulo_2 = "es hoy"
-        badge = "Pago programado para hoy"
-        intro = (
-            "Te recordamos que hoy tienes un pago a banco programado. "
-            "Te compartimos los detalles de tu pago:"
-        )
+    dias = int(numero(dias))
+    if dias == 0:
+        titulo_1, titulo_2 = "Tu pago a banco", "es hoy"
+        recordatorio_1, recordatorio_2 = "Tu pago es", "hoy"
+        bajada = "Queremos recordarte que hoy corresponde la fecha programada de tu pago a banco."
     else:
-        titulo_1 = "Tu próximo pago"
-        titulo_2 = "está cerca"
-        badge = "Faltan 3 días"
-        intro = (
-            "Queremos recordarte que tienes un pago a banco programado para los próximos días. "
-            "Te compartimos los detalles de tu próximo pago:"
-        )
+        titulo_1, titulo_2 = "Tu próximo pago", "está cerca"
+        recordatorio_1, recordatorio_2 = "Faltan 3 días", "para tu pago a banco."
+        bajada = "Queremos recordarte la fecha programada de tu pago a banco."
 
-    return f"""<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-</head>
-<body style="margin:0;padding:0;background-color:#f3f5f9;font-family:Arial,Helvetica,sans-serif;color:#27304f;">
-<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;background-color:#f3f5f9;border-collapse:collapse;">
-<tr><td align="center" style="padding:28px 10px;">
-<table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" style="width:600px;max-width:600px;background-color:#ffffff;border-collapse:separate;border-spacing:0;border-radius:16px;overflow:hidden;">
-
-<tr><td align="center" style="padding:28px 36px 18px 36px;">
-<img src="{BRAVO_LOGO_URL}" width="175" alt="Bravo" style="display:block;width:175px;max-width:175px;height:auto;border:0;margin:0 auto;">
-</td></tr>
-
-<tr><td style="padding:4px 38px 0 38px;font-size:40px;line-height:43px;font-weight:800;letter-spacing:-0.8px;color:#261269;">
-{titulo_1}<br><span style="color:#19b9c7;">{titulo_2}</span>
-</td></tr>
-
-<tr><td style="padding:25px 38px 8px 38px;font-size:17px;line-height:26px;color:#27304f;">Hola, <strong>{nombre}:</strong></td></tr>
-<tr><td style="padding:0 38px 22px 38px;font-size:15px;line-height:24px;color:#46506a;">{intro}</td></tr>
-
-<tr><td style="padding:0 38px 18px 38px;">
-<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;background-color:#f5f9ff;border:1px solid #dce7f3;border-radius:12px;border-collapse:separate;">
-<tr>
-<td width="74" align="center" valign="middle" style="padding:20px 0 20px 18px;border-bottom:1px solid #dce7f3;">
-<table role="presentation" width="50" height="50" cellspacing="0" cellpadding="0" border="0" style="width:50px;height:50px;background-color:#d8f5fb;border-radius:25px;"><tr><td align="center" valign="middle" style="font-size:22px;font-weight:bold;color:#261269;">&#128197;</td></tr></table>
-</td>
-<td valign="middle" style="padding:18px 22px;border-bottom:1px solid #dce7f3;">
-<div style="font-size:13px;line-height:18px;color:#59657c;">Fecha de pago</div>
-<div style="font-size:23px;line-height:31px;font-weight:800;color:#111a43;">{fecha_txt}</div>
-<span style="display:inline-block;margin-top:5px;background-color:#c9f3ff;color:#087eaa;padding:5px 12px;border-radius:8px;font-size:12px;line-height:16px;font-weight:700;">{badge}</span>
-</td>
-</tr>
-<tr>
-<td width="74" align="center" valign="middle" style="padding:20px 0 20px 18px;">
-<table role="presentation" width="50" height="50" cellspacing="0" cellpadding="0" border="0" style="width:50px;height:50px;background-color:#d8f5fb;border-radius:25px;"><tr><td align="center" valign="middle" style="font-size:25px;font-weight:bold;color:#261269;">$</td></tr></table>
-</td>
-<td valign="middle" style="padding:18px 22px;">
-<div style="font-size:13px;line-height:18px;color:#59657c;">Valor del pago</div>
-<div style="font-size:28px;line-height:36px;font-weight:800;color:#111a43;">{valor_txt}</div>
-</td>
-</tr>
-</table>
-</td></tr>
-
-<tr><td style="padding:0 38px 18px 38px;">
-<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;background-color:#f1f7fc;border-radius:10px;"><tr><td style="padding:14px 16px;font-size:14px;line-height:21px;color:#59657c;"><strong style="color:#19a9c0;">i</strong>&nbsp;&nbsp; Te recomendamos tener presente esta fecha para continuar con normalidad tu proceso.</td></tr></table>
-</td></tr>
-
-<tr><td align="center" style="padding:0 38px 26px 38px;">
-<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;"><tr><td align="center" bgcolor="#19b9c7" style="border-radius:26px;">
-<a href="https://wa.me/{BRAVO_WHATSAPP}" style="display:block;padding:14px 20px;color:#ffffff;text-decoration:none;font-size:16px;line-height:20px;font-weight:700;">Consultar por WhatsApp</a>
-</td></tr></table>
-</td></tr>
-
-<tr><td style="padding:18px 24px;background-color:#f4f8fc;">
-<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr>
-<td align="center" width="33%" style="font-size:11px;line-height:16px;color:#59657c;"><span style="font-size:18px;color:#3d2d8f;">&#9671;</span><br>Continuamos<br>con tu proceso</td>
-<td align="center" width="34%" style="font-size:11px;line-height:16px;color:#59657c;"><span style="font-size:18px;color:#3d2d8f;">&#9675;</span><br>Estamos aquí<br>para apoyarte</td>
-<td align="center" width="33%" style="font-size:11px;line-height:16px;color:#59657c;"><span style="font-size:18px;color:#3d2d8f;">&#9993;</span><br>Escríbenos si<br>tienes dudas</td>
-</tr></table>
-</td></tr>
-
-<tr><td style="padding:17px 28px 19px 28px;border-bottom:5px solid #20bfd0;font-size:11px;line-height:17px;color:#59657c;">
-<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr>
-<td valign="top"><strong style="color:#261269;font-size:13px;">Bravo S.A.S.</strong><br>Tu tranquilidad, nuestra prioridad.</td>
-<td align="right" valign="top">WhatsApp: {BRAVO_WHATSAPP_DISPLAY}<br>Lunes a viernes, 8:00 a.m. - 6:00 p.m.</td>
-</tr></table>
-</td></tr>
-
-</table>
-</td></tr>
-</table>
-</body>
-</html>"""
+    return f'''<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f4f5f9;font-family:Arial,Helvetica,sans-serif;color:#525b82;">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#f4f5f9;width:100%;border-collapse:collapse;"><tr><td align="center" style="padding:18px 8px;">
+<table role="presentation" width="700" cellspacing="0" cellpadding="0" border="0" style="width:700px;max-width:700px;background:#fff;border-collapse:collapse;border-top:6px solid #38278f;">
+<tr><td style="padding:26px 48px 10px;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td width="68%" align="center"><img src="{BRAVO_LOGO_URL}" width="170" alt="Bravo" style="display:block;width:170px;height:auto;border:0;margin:0 auto 6px;"><div style="font-size:12px;line-height:18px;color:#7a82a1;">Soluciones financieras para un mejor futuro</div></td><td width="32%" align="right" valign="top" style="font-size:12px;line-height:16px;color:#6f789a;font-weight:bold;padding-top:8px;">TU TRANQUILIDAD<br>TAMBIÉN CUENTA</td></tr></table></td></tr>
+<tr><td style="padding:20px 48px 0;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td width="66%" valign="middle" style="font-size:42px;line-height:43px;font-weight:800;letter-spacing:-1px;color:#35238f;">{titulo_1}<br><span style="color:#08b9bd;">{titulo_2}</span></td><td width="34%" align="center" valign="middle"><table role="presentation" width="132" height="132" cellspacing="0" cellpadding="0" border="0" style="width:132px;height:132px;background:#f2f0ff;border-radius:66px;"><tr><td align="center" valign="middle" style="font-size:70px;line-height:80px;">&#128197;</td></tr></table></td></tr></table></td></tr>
+<tr><td style="padding:6px 48px 20px;font-size:18px;line-height:26px;color:#525b82;">{bajada}</td></tr>
+<tr><td style="padding:8px 48px 10px;font-size:18px;line-height:27px;color:#525b82;">Hola <strong style="color:#2d2088;">{nombre},</strong></td></tr>
+<tr><td style="padding:0 48px 20px;font-size:17px;line-height:26px;color:#525b82;">Te recordamos que, según tu acuerdo, la próxima fecha de pago a banco es la siguiente:</td></tr>
+<tr><td style="padding:0 48px 18px;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#f5f3ff;border-radius:14px;border-collapse:separate;"><tr><td width="50%" style="padding:22px;border-right:1px solid #dcd9f0;"><table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr><td width="58" valign="middle"><table role="presentation" width="48" height="48" cellspacing="0" cellpadding="0" border="0" style="background:#e9e5ff;border-radius:24px;"><tr><td align="center" style="font-size:25px;">&#128197;</td></tr></table></td><td><div style="font-size:15px;color:#596184;">Fecha de pago</div><div style="font-size:22px;line-height:27px;font-weight:800;color:#251780;">{fecha_txt}</div></td></tr></table></td><td width="50%" style="padding:22px;"><table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr><td width="58"><table role="presentation" width="48" height="48" cellspacing="0" cellpadding="0" border="0" style="background:#e9e5ff;border-radius:24px;"><tr><td align="center" style="font-size:26px;color:#35238f;font-weight:bold;">$</td></tr></table></td><td><div style="font-size:15px;color:#596184;">Valor del pago</div><div style="font-size:24px;line-height:29px;font-weight:800;color:#251780;">{valor_txt}</div></td></tr></table></td></tr></table></td></tr>
+<tr><td style="padding:0 48px 22px;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#e9fbfc;border-radius:14px;"><tr><td width="86" align="center" style="padding:18px 0;font-size:34px;">&#9200;</td><td style="padding:16px 20px;border-left:1px solid #c6e9ed;"><div style="font-size:25px;line-height:28px;font-weight:800;color:#08aaaf;">{recordatorio_1}</div><div style="font-size:17px;line-height:24px;color:#525b82;">{recordatorio_2}</div></td></tr></table></td></tr>
+<tr><td style="padding:0 48px 18px;font-size:16px;line-height:25px;color:#525b82;">Una vez realices el pago, recuerda conservar el soporte correspondiente.<br>Si tienes alguna duda o necesitas apoyo, nuestro equipo está listo para acompañarte.</td></tr>
+<tr><td style="padding:4px 48px 28px;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td align="center" bgcolor="#08b9bd" style="border-radius:14px;"><a href="https://wa.me/{BRAVO_WHATSAPP}" style="display:block;padding:18px 22px;color:#fff;text-decoration:none;font-size:19px;line-height:23px;font-weight:800;">&#9742; &nbsp; Habla con nosotros por WhatsApp &nbsp; &#8594;</a></td></tr></table></td></tr>
+<tr><td style="padding:18px 38px 28px;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td width="33%" style="padding:0 10px;text-align:center;color:#525b82;font-size:12px;line-height:17px;"><div style="font-size:28px;color:#35238f;">&#9993;</div><strong style="display:block;color:#2d2088;font-size:15px;line-height:18px;margin:7px 0 4px;">Resuelve<br>tus dudas</strong>Nuestro equipo<br>te acompaña.</td><td width="34%" style="padding:0 10px;text-align:center;color:#525b82;font-size:12px;line-height:17px;"><div style="font-size:28px;color:#35238f;">&#9671;</div><strong style="display:block;color:#2d2088;font-size:15px;line-height:18px;margin:7px 0 4px;">Tu información<br>está segura</strong>Tratamos tus datos<br>con confidencialidad.</td><td width="33%" style="padding:0 10px;text-align:center;color:#525b82;font-size:12px;line-height:17px;"><div style="font-size:28px;color:#35238f;">&#9675;</div><strong style="display:block;color:#2d2088;font-size:15px;line-height:18px;margin:7px 0 4px;">Juntos es<br>posible</strong>Seguimos a tu lado<br>en este proceso.</td></tr></table></td></tr>
+<tr><td style="padding:20px 48px;border-top:1px solid #dfe2ed;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td width="34%"><img src="{BRAVO_LOGO_URL}" width="115" alt="Bravo" style="display:block;width:115px;height:auto;border:0;"></td><td width="66%" style="padding-left:24px;border-left:1px solid #dfe2ed;color:#525b82;font-size:12px;line-height:19px;"><strong style="font-size:14px;color:#2d2088;">Bravo S.A.S.</strong><br>&#9742; {BRAVO_WHATSAPP_DISPLAY}<br>Lunes a viernes, 8:00 a.m. - 6:00 p.m.</td></tr></table></td></tr>
+<tr><td height="18" style="height:18px;background:#f3f0ff;border-bottom:5px solid #10bcc6;font-size:0;line-height:0;">&nbsp;</td></tr>
+</table></td></tr></table></body></html>'''
 
 
 def aviso_generado(valor):
@@ -5310,6 +5243,15 @@ elif menu == "📧 Campañas":
                                 f"Vista previa: {min(len(candidatos), 500)} de {len(candidatos)} destinatarios."
                             )
 
+                            primera_fila = candidatos.iloc[0]
+                            asunto_ejemplo = str(primera_fila.get("ASUNTO_PREVIO", "")).strip()
+                            cuerpo_ejemplo = str(primera_fila.get("CUERPO_PREVIO", "")).strip()
+                            html_ejemplo = envolver_html_bravo(cuerpo_ejemplo)
+                            with st.expander("👁️ Ver plantilla que se usará · ejemplo del primer correo", expanded=False):
+                                st.caption(f"Asunto: {asunto_ejemplo or 'Sin asunto'}")
+                                st.caption("Ejemplo construido con el primer destinatario elegible: " + str(primera_fila.get("NOMBRE", "")).strip() + " · " + str(primera_fila.get("REFERENCIA", "")).strip())
+                                components.html(html_ejemplo, height=760, scrolling=True)
+
                             estado_actual = str(fila_sel.get("ESTADO", "")).strip().upper()
 
                             if estado_actual in {"PREPARADA", "PROGRAMADA"}:
@@ -5832,15 +5774,33 @@ elif menu == "⚠️ Pendientes":
 
 elif menu == "📝 Plantillas":
 
-    st.title(
-        "📝 Plantillas"
-    )
+    st.title("📝 Plantillas")
+    st.caption("Consulta la base de plantillas y valida visualmente el resultado que recibirá el cliente.")
+    st.dataframe(plantillas, use_container_width=True, hide_index=True)
 
-    st.dataframe(
-        plantillas,
-        use_container_width=True,
-        hide_index=True
-    )
+    if plantillas.empty or "ID_PLANTILLA" not in plantillas.columns:
+        st.info("No hay plantillas disponibles para previsualizar.")
+    else:
+        ids_plantilla = [str(x).strip() for x in plantillas["ID_PLANTILLA"].tolist() if str(x).strip()]
+        ids_plantilla = list(dict.fromkeys(ids_plantilla))
+        st.divider()
+        st.subheader("👁️ Vista previa de plantilla")
+        id_preview = st.selectbox("Plantilla", ids_plantilla, key="plantilla_preview_id")
+        fila_preview = obtener_plantilla_generica(id_preview)
+        if fila_preview is not None:
+            id_upper = str(id_preview).strip().upper()
+            if id_upper in {"PAB000", "PAB003"}:
+                dias_preview = 0 if id_upper == "PAB000" else 3
+                datos_demo = {"NOMBRE":"Dioben Jesus Araujo Hernandez","REFERENCIA":"PRUEBA-001","FECHA_PAB":"18/09/2026","VALOR_PAB":1000000}
+                asunto_preview = reemplazar_variables_pab(fila_preview.get("ASUNTO", ""), datos_demo, "Pago programado para hoy" if dias_preview == 0 else "Recordatorio 3 días antes")
+                html_preview = html_pab_bravo("Dioben Jesus Araujo Hernandez", "18/09/2026", 1000000, dias_preview)
+            else:
+                ejemplo = {"NOMBRE":"Cliente de ejemplo","REFERENCIA":"PRUEBA-001","EMAIL":"cliente@ejemplo.com","MORA":"Mora 30","ENCARGADO":"Equipo Bravo","SALDO":1000000}
+                asunto_preview = reemplazar_variables_genericas(fila_preview.get("ASUNTO", ""), ejemplo)
+                cuerpo_preview = reemplazar_variables_genericas(fila_preview.get("CUERPO", ""), ejemplo)
+                html_preview = envolver_html_bravo(cuerpo_preview)
+            st.caption(f"Asunto de ejemplo: {asunto_preview or 'Sin asunto'}")
+            components.html(html_preview, height=980, scrolling=True)
 
 
 # ============================================================
