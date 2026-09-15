@@ -917,6 +917,125 @@ def aviso_generado(valor):
 
 
 # ============================================================
+# PLANTILLAS VISUALES DE MORA
+# ============================================================
+
+def _html_final_para_preview(cuerpo):
+    cuerpo = str(cuerpo or "")
+    if re.search(r"<\s*(html|body|table)\b", cuerpo, flags=re.I):
+        return cuerpo
+    return envolver_html_bravo(cuerpo)
+
+
+def html_mora_bravo(nombre, mora, id_plantilla="T001"):
+    import html as _html
+
+    nombre = _html.escape(str(nombre or "Cliente").strip() or "Cliente")
+    idp = str(id_plantilla or "T001").strip().upper()
+
+    configuracion = {
+        "T001": {
+            "titulo_1": "Tu acuerdo",
+            "titulo_2": "necesita atención",
+            "mensaje": "Identificamos que el pago correspondiente a tu acuerdo se encuentra pendiente. Queremos ayudarte a regularizarlo cuanto antes y mantener tu proceso al día.",
+            "destacado": "Aún estás a tiempo",
+            "destacado_2": "de ponerte al día con tu acuerdo.",
+            "accion": "Cuéntanos cómo podemos ayudarte",
+        },
+        "T030": {
+            "titulo_1": "Queremos ayudarte",
+            "titulo_2": "a ponerte al día",
+            "mensaje": "Tu acuerdo presenta un pago pendiente y queremos acompañarte para encontrar una alternativa que te permita regularizar tu situación.",
+            "destacado": "Hablemos de tu caso",
+            "destacado_2": "podemos revisar contigo las opciones disponibles.",
+            "accion": "Revisar mi situación por WhatsApp",
+        },
+        "T060": {
+            "titulo_1": "Tu proceso",
+            "titulo_2": "requiere atención",
+            "mensaje": "Tu acuerdo continúa con pagos pendientes. Es importante revisar tu situación para definir una alternativa y evitar que el atraso siga avanzando.",
+            "destacado": "Podemos buscar una alternativa",
+            "destacado_2": "para ayudarte a retomar tu acuerdo.",
+            "accion": "Hablar con el equipo Bravo",
+        },
+        "T090": {
+            "titulo_1": "Es importante",
+            "titulo_2": "que hablemos",
+            "mensaje": "Tu acuerdo presenta un atraso prolongado. Queremos revisar contigo las opciones disponibles para regularizar tu situación y definir los próximos pasos de tu proceso.",
+            "destacado": "Revisemos tu caso hoy",
+            "destacado_2": "nuestro equipo está disponible para orientarte.",
+            "accion": "Contactar a Bravo por WhatsApp",
+        },
+    }
+
+    cfg = configuracion.get(idp, configuracion["T001"])
+    mora_txt = _html.escape(str(mora or "Pago pendiente").strip() or "Pago pendiente")
+
+    return f'''<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f4f5f9;font-family:Arial,Helvetica,sans-serif;color:#525b82;">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;background:#f4f5f9;border-collapse:collapse;"><tr><td align="center" style="padding:18px 8px;">
+<table role="presentation" width="700" cellspacing="0" cellpadding="0" border="0" style="width:700px;max-width:700px;background:#fff;border-collapse:collapse;border-top:6px solid #38278f;">
+
+<tr><td style="padding:26px 48px 10px;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr>
+<td width="68%" align="center"><img src="{BRAVO_LOGO_URL}" width="170" alt="Bravo" style="display:block;width:170px;height:auto;border:0;margin:0 auto 6px;"><div style="font-size:12px;line-height:18px;color:#7a82a1;">Soluciones financieras para un mejor futuro</div></td>
+<td width="32%" align="right" valign="top" style="font-size:12px;line-height:16px;color:#6f789a;font-weight:bold;padding-top:8px;">TU TRANQUILIDAD<br>TAMBIÉN CUENTA</td>
+</tr></table></td></tr>
+
+<tr><td style="padding:24px 48px 4px;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr>
+<td width="68%" valign="middle" style="font-size:40px;line-height:42px;font-weight:800;letter-spacing:-1px;color:#35238f;">{cfg["titulo_1"]}<br><span style="color:#08b9bd;">{cfg["titulo_2"]}</span></td>
+<td width="32%" align="center"><table role="presentation" width="124" height="124" cellspacing="0" cellpadding="0" border="0" style="width:124px;height:124px;background:#f2f0ff;border-radius:62px;"><tr><td align="center" valign="middle" style="font-size:58px;">&#128172;</td></tr></table></td>
+</tr></table></td></tr>
+
+<tr><td style="padding:12px 48px 10px;font-size:18px;line-height:27px;color:#525b82;">Hola <strong style="color:#2d2088;">{nombre},</strong></td></tr>
+<tr><td style="padding:0 48px 22px;font-size:17px;line-height:27px;color:#525b82;">{cfg["mensaje"]}</td></tr>
+
+<tr><td style="padding:0 48px 18px;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#f5f3ff;border-radius:14px;"><tr>
+<td width="82" align="center" style="padding:20px 0;font-size:34px;">&#128197;</td>
+<td style="padding:18px 20px;border-left:1px solid #dcd9f0;"><div style="font-size:14px;line-height:20px;color:#596184;">Estado de tu acuerdo</div><div style="font-size:23px;line-height:29px;font-weight:800;color:#251780;">{mora_txt}</div></td>
+</tr></table></td></tr>
+
+<tr><td style="padding:0 48px 22px;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#e9fbfc;border-radius:14px;"><tr>
+<td width="86" align="center" style="padding:18px 0;font-size:34px;">&#10003;</td>
+<td style="padding:16px 20px;border-left:1px solid #c6e9ed;"><div style="font-size:24px;line-height:29px;font-weight:800;color:#08aaaf;">{cfg["destacado"]}</div><div style="font-size:16px;line-height:24px;color:#525b82;">{cfg["destacado_2"]}</div></td>
+</tr></table></td></tr>
+
+<tr><td style="padding:0 48px 18px;font-size:16px;line-height:25px;color:#525b82;">Si tuviste alguna dificultad con tu pago o tu situación cambió, escríbenos. Nuestro equipo está listo para revisar tu caso y orientarte.</td></tr>
+
+<tr><td style="padding:4px 48px 28px;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td align="center" bgcolor="#08b9bd" style="border-radius:14px;">
+<a href="https://wa.me/{BRAVO_WHATSAPP}" style="display:block;padding:18px 22px;color:#fff;text-decoration:none;font-size:19px;line-height:23px;font-weight:800;">&#9742; &nbsp; {cfg["accion"]} &nbsp; &#8594;</a>
+</td></tr></table></td></tr>
+
+<tr><td style="padding:18px 38px 28px;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr>
+<td width="33%" style="padding:0 10px;text-align:center;color:#525b82;font-size:12px;line-height:17px;"><div style="font-size:28px;color:#35238f;">&#9993;</div><strong style="display:block;color:#2d2088;font-size:15px;line-height:18px;margin:7px 0 4px;">Resuelve<br>tus dudas</strong>Nuestro equipo<br>te acompaña.</td>
+<td width="34%" style="padding:0 10px;text-align:center;color:#525b82;font-size:12px;line-height:17px;"><div style="font-size:28px;color:#35238f;">&#9671;</div><strong style="display:block;color:#2d2088;font-size:15px;line-height:18px;margin:7px 0 4px;">Tu información<br>está segura</strong>Tratamos tus datos<br>con confidencialidad.</td>
+<td width="33%" style="padding:0 10px;text-align:center;color:#525b82;font-size:12px;line-height:17px;"><div style="font-size:28px;color:#35238f;">&#9675;</div><strong style="display:block;color:#2d2088;font-size:15px;line-height:18px;margin:7px 0 4px;">Juntos es<br>posible</strong>Seguimos a tu lado<br>en este proceso.</td>
+</tr></table></td></tr>
+
+<tr><td style="padding:20px 48px;border-top:1px solid #dfe2ed;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr>
+<td width="34%"><img src="{BRAVO_LOGO_URL}" width="115" alt="Bravo" style="display:block;width:115px;height:auto;border:0;"></td>
+<td width="66%" style="padding-left:24px;border-left:1px solid #dfe2ed;color:#525b82;font-size:12px;line-height:19px;"><strong style="font-size:14px;color:#2d2088;">Bravo S.A.S.</strong><br>&#9742; {BRAVO_WHATSAPP_DISPLAY}<br>Lunes a viernes, 8:00 a.m. - 6:00 p.m.</td>
+</tr></table></td></tr>
+
+<tr><td height="18" style="height:18px;background:#f3f0ff;border-bottom:5px solid #10bcc6;font-size:0;line-height:0;">&nbsp;</td></tr>
+</table></td></tr></table></body></html>'''
+
+
+def construir_html_campana(id_plantilla, fila, cuerpo_base=""):
+    idp = str(id_plantilla or "").strip().upper()
+
+    if idp in {"T001", "T030", "T060", "T090"}:
+        return html_mora_bravo(
+            nombre=fila.get("NOMBRE", ""),
+            mora=fila.get("MORA", ""),
+            id_plantilla=idp,
+        )
+
+    cuerpo = reemplazar_variables_genericas(cuerpo_base, fila)
+    return _html_final_para_preview(cuerpo)
+
+
+# ============================================================
 # PLANTILLAS PAB
 # ============================================================
 
@@ -2633,7 +2752,11 @@ def preparar_clientes_campana(fila_campana):
         axis=1
     )
     base["CUERPO_PREVIO"] = base.apply(
-        lambda f: reemplazar_variables_genericas(plantilla.get("CUERPO", ""), f),
+        lambda f: construir_html_campana(
+            id_plantilla=id_plantilla,
+            fila=f,
+            cuerpo_base=plantilla.get("CUERPO", "")
+        ),
         axis=1
     )
 
@@ -5246,7 +5369,7 @@ elif menu == "📧 Campañas":
                             primera_fila = candidatos.iloc[0]
                             asunto_ejemplo = str(primera_fila.get("ASUNTO_PREVIO", "")).strip()
                             cuerpo_ejemplo = str(primera_fila.get("CUERPO_PREVIO", "")).strip()
-                            html_ejemplo = envolver_html_bravo(cuerpo_ejemplo)
+                            html_ejemplo = _html_final_para_preview(cuerpo_ejemplo)
                             with st.expander("👁️ Ver plantilla que se usará · ejemplo del primer correo", expanded=False):
                                 st.caption(f"Asunto: {asunto_ejemplo or 'Sin asunto'}")
                                 st.caption("Ejemplo construido con el primer destinatario elegible: " + str(primera_fila.get("NOMBRE", "")).strip() + " · " + str(primera_fila.get("REFERENCIA", "")).strip())
@@ -5794,11 +5917,34 @@ elif menu == "📝 Plantillas":
                 datos_demo = {"NOMBRE":"Dioben Jesus Araujo Hernandez","REFERENCIA":"PRUEBA-001","FECHA_PAB":"18/09/2026","VALOR_PAB":1000000}
                 asunto_preview = reemplazar_variables_pab(fila_preview.get("ASUNTO", ""), datos_demo, "Pago programado para hoy" if dias_preview == 0 else "Recordatorio 3 días antes")
                 html_preview = html_pab_bravo("Dioben Jesus Araujo Hernandez", "18/09/2026", 1000000, dias_preview)
+            elif id_upper in {"T001", "T030", "T060", "T090"}:
+                mora_demo = {
+                    "T001": "Mora 1",
+                    "T030": "Mora 30",
+                    "T060": "Mora 60",
+                    "T090": "Mora 90",
+                }.get(id_upper, "Mora")
+                ejemplo = {
+                    "NOMBRE": "Dioben Jesus Araujo Hernandez",
+                    "REFERENCIA": "PRUEBA-001",
+                    "EMAIL": "cliente@ejemplo.com",
+                    "MORA": mora_demo,
+                    "ENCARGADO": "Equipo Bravo",
+                    "SALDO": 1000000,
+                }
+                asunto_preview = reemplazar_variables_genericas(
+                    fila_preview.get("ASUNTO", ""), ejemplo
+                )
+                html_preview = construir_html_campana(
+                    id_plantilla=id_upper,
+                    fila=ejemplo,
+                    cuerpo_base=fila_preview.get("CUERPO", "")
+                )
             else:
                 ejemplo = {"NOMBRE":"Cliente de ejemplo","REFERENCIA":"PRUEBA-001","EMAIL":"cliente@ejemplo.com","MORA":"Mora 30","ENCARGADO":"Equipo Bravo","SALDO":1000000}
                 asunto_preview = reemplazar_variables_genericas(fila_preview.get("ASUNTO", ""), ejemplo)
                 cuerpo_preview = reemplazar_variables_genericas(fila_preview.get("CUERPO", ""), ejemplo)
-                html_preview = envolver_html_bravo(cuerpo_preview)
+                html_preview = _html_final_para_preview(cuerpo_preview)
             st.caption(f"Asunto de ejemplo: {asunto_preview or 'Sin asunto'}")
             components.html(html_preview, height=980, scrolling=True)
 
