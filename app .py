@@ -941,6 +941,10 @@ def html_mora_bravo(nombre, mora, id_plantilla="T001"):
             "destacado": "Aún estás a tiempo",
             "destacado_2": "de ponerte al día con tu acuerdo.",
             "accion": "Cuéntanos cómo podemos ayudarte",
+            "repercusiones": [
+                "Reportes negativos ante centrales de riesgo",
+                "Notificaciones de cobro constantes",
+            ],
         },
         "T030": {
             "titulo_1": "Queremos ayudarte",
@@ -949,6 +953,10 @@ def html_mora_bravo(nombre, mora, id_plantilla="T001"):
             "destacado": "Hablemos de tu caso",
             "destacado_2": "podemos revisar contigo las opciones disponibles.",
             "accion": "Revisar mi situación por WhatsApp",
+            "repercusiones": [
+                "Intereses de mora",
+                "Gastos de cobranza",
+            ],
         },
         "T060": {
             "titulo_1": "Tu proceso",
@@ -957,6 +965,11 @@ def html_mora_bravo(nombre, mora, id_plantilla="T001"):
             "destacado": "Podemos buscar una alternativa",
             "destacado_2": "para ayudarte a retomar tu acuerdo.",
             "accion": "Hablar con el equipo Bravo",
+            "repercusiones": [
+                "Hacer efectivo el pagaré",
+                "No posibilidad de negociación de comisiones pendientes",
+                "Reportes negativos ante centrales de riesgo",
+            ],
         },
         "T090": {
             "titulo_1": "Es importante",
@@ -965,11 +978,25 @@ def html_mora_bravo(nombre, mora, id_plantilla="T001"):
             "destacado": "Revisemos tu caso hoy",
             "destacado_2": "nuestro equipo está disponible para orientarte.",
             "accion": "Contactar a Bravo por WhatsApp",
+            "repercusiones": [
+                "Cobro prejurídico",
+                "Hacer efectivo el pagaré",
+            ],
         },
     }
 
     cfg = configuracion.get(idp, configuracion["T001"])
     mora_txt = _html.escape(str(mora or "Pago pendiente").strip() or "Pago pendiente")
+
+    repercusiones_html = "".join(
+        f"""<tr>
+<td width="34" valign="top" style="padding:7px 0 7px 2px;">
+<div style="width:25px;height:25px;line-height:25px;text-align:center;background:#fff0f3;border-radius:13px;color:#c73762;font-size:13px;font-weight:800;">{i}</div>
+</td>
+<td valign="top" style="padding:8px 0 7px 8px;font-size:15px;line-height:22px;color:#525b82;">{_html.escape(item)}</td>
+</tr>"""
+        for i, item in enumerate(cfg.get("repercusiones", []), start=1)
+    )
 
     return f'''<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
@@ -994,6 +1021,20 @@ def html_mora_bravo(nombre, mora, id_plantilla="T001"):
 <td width="82" align="center" style="padding:20px 0;font-size:34px;">&#128197;</td>
 <td style="padding:18px 20px;border-left:1px solid #dcd9f0;"><div style="font-size:14px;line-height:20px;color:#596184;">Estado de tu acuerdo</div><div style="font-size:23px;line-height:29px;font-weight:800;color:#251780;">{mora_txt}</div></td>
 </tr></table></td></tr>
+
+<tr><td style="padding:0 48px 18px;">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#fff7f8;border:1px solid #f2d7df;border-radius:14px;">
+<tr><td style="padding:18px 22px 10px;">
+<div style="font-size:13px;line-height:18px;font-weight:800;letter-spacing:.5px;color:#c73762;text-transform:uppercase;">Ten presente</div>
+<div style="font-size:20px;line-height:27px;font-weight:800;color:#35238f;margin-top:3px;">El atraso puede generar repercusiones como:</div>
+</td></tr>
+<tr><td style="padding:0 22px 16px;">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+{repercusiones_html}
+</table>
+</td></tr>
+</table>
+</td></tr>
 
 <tr><td style="padding:0 48px 22px;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#e9fbfc;border-radius:14px;"><tr>
 <td width="86" align="center" style="padding:18px 0;font-size:34px;">&#10003;</td>
