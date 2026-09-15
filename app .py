@@ -2683,45 +2683,94 @@ def _actualizar_campos_campana(id_campana, cambios):
 
 def programar_campana_segura(id_campana):
     """
-    Marca la CAMPAÑA como PROGRAMADA, pero mantiene TODOS sus correos en
-    COLA_ENVIO como BORRADOR. Por diseño, esta función NO habilita envíos.
-    """
-    fila = fila_campana_por_id(id_campana)
-    if fila is None:
-        raise ValueError("No encontré la campaña seleccionada.")
-    estado = str(fila.get("ESTADO", "")).strip().upper()
-    if estado != "PREPARADA":
-        raise ValueError("Solo una campaña PREPARADA puede programarse.")
+    Marca una campaña PREPARADA como PROGRAMADA sin volver a leer Google Sheets.
 
-    # Verificar que existan correos preparados y que ninguno deje BORRADOR.
-    archivo = obtener_archivo()
-    hoja_cola = archivo.worksheet("COLA_ENVIO")
-    valores = hoja_cola.get_all_values()
-    if not valores:
+    IMPORTANTE:
+    - Usa los DataFrames `campanas` y `cola` ya cargados por Streamlit.
+    - Hace UNA sola escritura a CAMPAÑAS.
+    - COLA_ENVIO permanece en BORRADOR.
+    - No envía correos.
+    """
+    id_buscar = str(id_campana).strip()
+
+    if campanas is None or campanas.empty:
+        raise ValueError("No hay datos de CAMPAÑAS cargados.")
+
+    if "ID_CAMPAÑA" not in campanas.columns or "ESTADO" not in campanas.columns:
+        raise ValueError("CAMPAÑAS no tiene ID_CAMPAÑA o ESTADO.")
+
+    mask_camp = (
+        campanas["ID_CAMPAÑA"]
+        .astype(str)
+        .str.strip()
+        .eq(id_buscar)
+    )
+
+    if not mask_camp.any():
+        raise ValueError("No encontré la campaña seleccionada en CAMPAÑAS.")
+
+    # El índice del DataFrame conserva la posición original de la hoja:
+    # índice 0 = fila 2 de Google Sheets.
+    idx_df = campanas.index[mask_camp][0]
+    fila_camp = campanas.loc[idx_df]
+
+    estado = str(fila_camp.get("ESTADO", "")).strip().upper()
+    if estado != "PREPARADA":
+        raise ValueError(
+            f"Solo una campaña PREPARADA puede programarse. Estado actual: {estado or 'VACÍO'}."
+        )
+
+    if cola is None or cola.empty:
         raise ValueError("COLA_ENVIO está vacía.")
-    encabezados = [str(x).strip() for x in valores[0]]
-    if "ID_CAMPAÑA" not in encabezados or "ESTADO" not in encabezados:
+
+    if "ID_CAMPAÑA" not in cola.columns or "ESTADO" not in cola.columns:
         raise ValueError("COLA_ENVIO no tiene ID_CAMPAÑA o ESTADO.")
-    i_camp = encabezados.index("ID_CAMPAÑA")
-    i_estado = encabezados.index("ESTADO")
-    filas_camp = [
-        f for f in valores[1:]
-        if len(f) > i_camp and str(f[i_camp]).strip() == str(id_campana).strip()
-    ]
-    if not filas_camp:
+
+    filas_camp = cola.loc[
+        cola["ID_CAMPAÑA"]
+        .astype(str)
+        .str.strip()
+        .eq(id_buscar)
+    ].copy()
+
+    if filas_camp.empty:
         raise ValueError("La campaña no tiene correos preparados en COLA_ENVIO.")
-    estados_no_seguros = {
-        str(f[i_estado]).strip().upper()
-        for f in filas_camp if len(f) > i_estado
-    } - {"BORRADOR"}
+
+    estados = (
+        filas_camp["ESTADO"]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .str.upper()
+    )
+
+    estados_no_seguros = sorted(
+        set(estados.tolist()) - {"BORRADOR"}
+    )
+
     if estados_no_seguros:
         raise ValueError(
             "Hay correos de esta campaña fuera de BORRADOR: "
-            + ", ".join(sorted(estados_no_seguros))
+            + ", ".join(estados_no_seguros)
         )
 
-    _actualizar_campos_campana(id_campana, {"ESTADO": "PROGRAMADA"})
-    st.cache_data.clear()
+    # UNA SOLA ESCRITURA. No hacemos get_all_values(), get(), ni nuevas
+    # lecturas de CAMPAÑAS/COLA_ENVIO durante la programación.
+    hoja_camp = obtener_archivo().worksheet("CAMPAÑAS")
+    columna_estado = list(campanas.columns).index("ESTADO") + 1
+    numero_fila_sheet = int(idx_df) + 2
+
+    hoja_camp.update_cell(
+        numero_fila_sheet,
+        columna_estado,
+        "PROGRAMADA"
+    )
+
+    # Mantener también el estado local coherente durante este rerun.
+    campanas.at[idx_df, "ESTADO"] = "PROGRAMADA"
+
+    # NO hacemos st.cache_data.clear() aquí: eso dispararía inmediatamente
+    # nuevas lecturas masivas y podría provocar otro 429.
     return len(filas_camp)
 
 
