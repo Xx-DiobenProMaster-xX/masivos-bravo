@@ -2468,6 +2468,46 @@ def reemplazar_variables_genericas(texto, fila):
     return texto
 
 
+
+def html_final_plantilla_generica(id_plantilla, fila):
+    """Construye el mismo HTML final que recibiría Gmail para una campaña manual."""
+    plantilla = obtener_plantilla_generica(id_plantilla)
+    if plantilla is None:
+        raise ValueError(f"No encontré la plantilla {id_plantilla}.")
+
+    asunto = reemplazar_variables_genericas(plantilla.get("ASUNTO", ""), fila)
+    cuerpo_renderizado = reemplazar_variables_genericas(plantilla.get("CUERPO", ""), fila)
+
+    if "<html" in cuerpo_renderizado.lower() or "<!doctype" in cuerpo_renderizado.lower():
+        html_final = cuerpo_renderizado
+    else:
+        html_final = envolver_html_bravo(cuerpo_renderizado)
+
+    return {
+        "asunto": asunto,
+        "cuerpo_renderizado": cuerpo_renderizado,
+        "html_final": html_final,
+    }
+
+
+def mostrar_preview_html_diagnostico(html_final, altura=760):
+    """Render aislado para que el CSS global de Streamlit no altere el email."""
+    st.components.v1.html(str(html_final or ""), height=altura, scrolling=True)
+
+
+def fila_ejemplo_plantilla():
+    return pd.Series({
+        "NOMBRE": "Juan Pérez",
+        "REFERENCIA": "3227405997",
+        "EMAIL": "cliente@ejemplo.com",
+        "MORA": "Mora 1",
+        "ENCARGADO": "Equipo Bravo",
+        "SALDO": 1248833,
+        "FECHA_PAB": "14/09/2026",
+        "VALOR_PAB": 1248833,
+    })
+
+
 def crear_campana_manual(
     nombre,
     tipo,
@@ -5310,6 +5350,34 @@ elif menu == "📧 Campañas":
                                 f"Vista previa: {min(len(candidatos), 500)} de {len(candidatos)} destinatarios."
                             )
 
+                            # Diagnóstico: usa el primer destinatario REAL de la campaña.
+                            primer_destinatario = candidatos.iloc[0]
+                            id_plantilla_preview = str(fila_sel.get("PLANTILLA", "")).strip()
+
+                            with st.expander(
+                                "👁️ Vista previa del correo que se usará · primer destinatario",
+                                expanded=False
+                            ):
+                                try:
+                                    preview_real = html_final_plantilla_generica(
+                                        id_plantilla_preview,
+                                        primer_destinatario
+                                    )
+                                    st.caption(
+                                        f"Plantilla: {id_plantilla_preview} · "
+                                        f"Referencia: {str(primer_destinatario.get('REFERENCIA', '')).strip()} · "
+                                        f"Email: {str(primer_destinatario.get('EMAIL', '')).strip()}"
+                                    )
+                                    st.write("**Asunto final:**")
+                                    st.code(preview_real["asunto"], language=None)
+                                    mostrar_preview_html_diagnostico(
+                                        preview_real["html_final"], altura=760
+                                    )
+                                    with st.expander("🧩 Ver HTML final exacto"):
+                                        st.code(preview_real["html_final"], language="html")
+                                except Exception as e:
+                                    st.error(f"No pude generar la vista previa HTML: {e}")
+
                             estado_actual = str(fila_sel.get("ESTADO", "")).strip().upper()
 
                             if estado_actual in {"PREPARADA", "PROGRAMADA"}:
@@ -5626,6 +5694,31 @@ elif menu == "📧 Campañas":
                         hide_index=True
                     )
 
+                    # Diagnóstico: muestra exactamente el CUERPO guardado en COLA_ENVIO.
+                    if "CUERPO" in detalle_cola.columns and not detalle_cola.empty:
+                        primer_envio = detalle_cola.iloc[0]
+                        cuerpo_cola = str(primer_envio.get("CUERPO", "") or "")
+                        if "<html" in cuerpo_cola.lower() or "<!doctype" in cuerpo_cola.lower():
+                            html_cola = cuerpo_cola
+                        else:
+                            html_cola = envolver_html_bravo(cuerpo_cola)
+
+                        with st.expander(
+                            "👁️ HTML exacto guardado para el primer correo de esta campaña",
+                            expanded=False
+                        ):
+                            st.caption(
+                                f"Referencia: {str(primer_envio.get('REFERENCIA', '')).strip()} · "
+                                f"Email: {str(primer_envio.get('EMAIL', '')).strip()} · "
+                                f"Plantilla: {str(primer_envio.get('PLANTILLA', '')).strip()} · "
+                                f"Estado: {str(primer_envio.get('ESTADO', '')).strip()}"
+                            )
+                            st.write("**Asunto guardado en COLA_ENVIO:**")
+                            st.code(str(primer_envio.get("ASUNTO", "") or ""), language=None)
+                            mostrar_preview_html_diagnostico(html_cola, altura=760)
+                            with st.expander("🧩 Ver HTML final exacto de COLA_ENVIO"):
+                                st.code(html_cola, language="html")
+
                 if estado_detalle == "BORRADOR":
                     st.info("➡️ Acción disponible: revisar destinatarios y preparar la campaña.")
                 elif estado_detalle == "PREPARADA":
@@ -5841,6 +5934,63 @@ elif menu == "📝 Plantillas":
         use_container_width=True,
         hide_index=True
     )
+
+    st.markdown("---")
+    st.subheader("👁️ Diagnóstico visual de plantilla")
+    st.caption(
+        "Esta vista permite separar el problema de diseño del problema de envío. "
+        "El HTML se renderiza de forma aislada para que el CSS de Streamlit no lo modifique."
+    )
+
+    ids_preview = obtener_ids_plantillas_activas()
+
+    if not ids_preview:
+        st.info("No encontré plantillas activas para previsualizar.")
+    else:
+        id_preview = st.selectbox(
+            "Selecciona una plantilla",
+            ids_preview,
+            key="preview_plantilla_html"
+        )
+
+        plantilla_preview = obtener_plantilla_generica(id_preview)
+        fila_demo = fila_ejemplo_plantilla()
+
+        if plantilla_preview is not None:
+            st.caption(
+                "Datos de ejemplo: Juan Pérez · referencia 3227405997 · "
+                "fecha 14/09/2026 · valor $1.248.833."
+            )
+
+            if str(id_preview).strip().upper() in {"PAB000", "PAB003"}:
+                dias_demo = 0 if str(id_preview).strip().upper() == "PAB000" else 3
+                asunto_demo = reemplazar_variables_pab(
+                    plantilla_preview.get("ASUNTO", ""),
+                    fila_demo,
+                    "Pago programado para hoy" if dias_demo == 0 else "Recordatorio 3 días antes"
+                )
+                html_demo = html_pab_bravo(
+                    nombre=fila_demo.get("NOMBRE", ""),
+                    fecha_pab=fila_demo.get("FECHA_PAB", ""),
+                    valor_pab=fila_demo.get("VALOR_PAB", ""),
+                    dias=dias_demo,
+                )
+            else:
+                preview = html_final_plantilla_generica(id_preview, fila_demo)
+                asunto_demo = preview["asunto"]
+                html_demo = preview["html_final"]
+
+            st.write("**Asunto renderizado:**")
+            st.code(asunto_demo, language=None)
+
+            with st.expander("👁️ Ver resultado visual de la plantilla", expanded=True):
+                mostrar_preview_html_diagnostico(html_demo, altura=800)
+
+            with st.expander("🧩 Ver HTML final"):
+                st.code(html_demo, language="html")
+
+            with st.expander("📄 Ver CUERPO original guardado en PLANTILLAS"):
+                st.code(str(plantilla_preview.get("CUERPO", "") or ""), language="html")
 
 
 # ============================================================
