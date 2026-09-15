@@ -13,6 +13,8 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import unicodedata
 import re
+import base64
+from email.message import EmailMessage
 import secrets
 
 # ============================================================
@@ -134,6 +136,236 @@ def procesar_callback_oauth():
         st.error(f"No pude completar la conexión con Google: {e}")
 
 procesar_callback_oauth()
+
+
+# ============================================================
+# GMAIL / ENVÍO CONTROLADO
+# ============================================================
+
+GMAIL_FROM = "acuerdosRTD@resuelvetudeuda.com"
+GMAIL_REPLY_TO = "acuerdosRTD@resuelvetudeuda.com"
+
+def construir_mensaje_gmail(destinatario, asunto, cuerpo_html, remitente=GMAIL_FROM):
+    destinatario = str(destinatario or "").strip()
+    asunto = str(asunto or "").strip()
+    cuerpo_html = str(cuerpo_html or "")
+    if not destinatario:
+        raise ValueError("El envío no tiene EMAIL.")
+    if not asunto:
+        raise ValueError("El envío no tiene ASUNTO.")
+
+    msg = EmailMessage()
+    msg["To"] = destinatario
+    msg["From"] = f"Bravo S.A.S. <{remitente}>"
+    msg["Reply-To"] = GMAIL_REPLY_TO
+    msg["Subject"] = asunto
+
+    # Versión de texto simple como respaldo y HTML como contenido principal.
+    texto_plano = re.sub(r"<[^>]+>", " ", cuerpo_html)
+    texto_plano = re.sub(r"\s+", " ", texto_plano).strip()
+    msg.set_content(texto_plano or "Bravo S.A.S.")
+    msg.add_alternative(cuerpo_html, subtype="html")
+
+    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")
+    return {"raw": raw}
+
+
+def enviar_mensaje_gmail(credenciales, destinatario, asunto, cuerpo_html):
+    servicio = build("gmail", "v1", credentials=credenciales, cache_discovery=False)
+    body = construir_mensaje_gmail(destinatario, asunto, cuerpo_html)
+    return servicio.users().messages().send(userId="me", body=body).execute()
+
+
+def _parse_fecha_programada(valor):
+    texto = str(valor or "").strip()
+    if not texto:
+        return None
+    formatos = [
+        "%d/%m/%Y %H:%M",
+        "%d/%m/%Y %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%Y-%m-%dT%H:%M",
+    ]
+    for formato in formatos:
+        try:
+            dt = datetime.strptime(texto, formato)
+            return dt.replace(tzinfo=TZ)
+        except Exception:
+            pass
+    try:
+        dt = pd.to_datetime(texto, dayfirst=True, errors="raise").to_pydatetime()
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=TZ)
+        return dt.astimezone(TZ)
+    except Exception:
+        return None
+
+
+def _estado_campana_actual(id_campana):
+    archivo = obtener_archivo()
+    hoja = archivo.worksheet("CAMPAÑAS")
+    valores = hoja.get_all_values()
+    if len(valores) <= 1:
+        return ""
+    encabezados = [str(x).strip() for x in valores[0]]
+    if "ID_CAMPAÑA" not in encabezados or "ESTADO" not in encabezados:
+        return ""
+    i_id = encabezados.index("ID_CAMPAÑA")
+    i_estado = encabezados.index("ESTADO")
+    for fila in valores[1:]:
+        if len(fila) > i_id and str(fila[i_id]).strip() == str(id_campana).strip():
+            return str(fila[i_estado] if len(fila) > i_estado else "").strip().upper()
+    return ""
+
+
+def procesar_campanas_programadas_gmail(credenciales, limite=100):
+    """
+    Envía únicamente filas BORRADOR cuya campaña está PROGRAMADA y cuya
+    FECHA_PROG ya venció. Cada fila se marca ENVIANDO antes de llamar Gmail,
+    lo que evita un doble envío por una segunda ejecución concurrente.
+    """
+    if credenciales is None:
+        raise ValueError("Gmail no está conectado.")
+
+    archivo = obtener_archivo()
+    hoja = archivo.worksheet("COLA_ENVIO")
+    valores = hoja.get_all_values()
+    if len(valores) <= 1:
+        return {"enviados": 0, "errores": 0, "omitidos": 0, "detalle": []}
+
+    enc = [str(x).strip() for x in valores[0]]
+    requeridas = {
+        "ID_ENVIO", "ID_CAMPAÑA", "EMAIL", "ASUNTO", "CUERPO", "ESTADO",
+        "FECHA_PROG", "FECHA_ENVIO", "INTENTOS", "ERROR", "ID_MENSAJE"
+    }
+    faltan = requeridas - set(enc)
+    if faltan:
+        raise ValueError("Faltan columnas en COLA_ENVIO: " + ", ".join(sorted(faltan)))
+
+    idx = {c: enc.index(c) for c in requeridas}
+    ahora = datetime.now(TZ)
+    enviados = errores = omitidos = 0
+    detalle = []
+    campanas_tocadas = set()
+    estados_campana = {}
+
+    for numero_fila, fila in enumerate(valores[1:], start=2):
+        if enviados + errores >= int(limite):
+            break
+
+        def val(c):
+            i = idx[c]
+            return str(fila[i] if len(fila) > i else "").strip()
+
+        estado = val("ESTADO").upper()
+        if estado != "BORRADOR":
+            continue
+
+        id_campana = val("ID_CAMPAÑA")
+        if id_campana not in estados_campana:
+            estados_campana[id_campana] = _estado_campana_actual(id_campana)
+        if estados_campana[id_campana] != "PROGRAMADA":
+            omitidos += 1
+            continue
+
+        fecha_prog = _parse_fecha_programada(val("FECHA_PROG"))
+        if fecha_prog is None or fecha_prog > ahora:
+            omitidos += 1
+            continue
+
+        email = val("EMAIL")
+        asunto = val("ASUNTO")
+        cuerpo = val("CUERPO")
+        id_envio = val("ID_ENVIO")
+        intentos_previos = entero_seguro(val("INTENTOS"), 0)
+
+        # Bloqueo previo al envío para idempotencia/concurrencia.
+        hoja.update_cell(numero_fila, idx["ESTADO"] + 1, "ENVIANDO")
+        hoja.update_cell(numero_fila, idx["INTENTOS"] + 1, intentos_previos + 1)
+
+        try:
+            respuesta = enviar_mensaje_gmail(
+                credenciales=credenciales,
+                destinatario=email,
+                asunto=asunto,
+                cuerpo_html=cuerpo,
+            )
+            gmail_id = str(respuesta.get("id", "")).strip()
+            fecha_envio = datetime.now(TZ).strftime("%d/%m/%Y %H:%M:%S")
+
+            hoja.update_cell(numero_fila, idx["FECHA_ENVIO"] + 1, fecha_envio)
+            hoja.update_cell(numero_fila, idx["ID_MENSAJE"] + 1, gmail_id)
+            hoja.update_cell(numero_fila, idx["ERROR"] + 1, "")
+            hoja.update_cell(numero_fila, idx["ESTADO"] + 1, "ENVIADO")
+            enviados += 1
+            detalle.append({"ID_ENVIO": id_envio, "EMAIL": email, "RESULTADO": "ENVIADO"})
+        except Exception as e:
+            # ERROR no se reintenta automáticamente: requiere revisión explícita.
+            hoja.update_cell(numero_fila, idx["ERROR"] + 1, str(e)[:500])
+            hoja.update_cell(numero_fila, idx["ESTADO"] + 1, "ERROR")
+            errores += 1
+            detalle.append({"ID_ENVIO": id_envio, "EMAIL": email, "RESULTADO": f"ERROR: {e}"})
+
+        campanas_tocadas.add(id_campana)
+
+    # Recalcular contadores y estado de cada campaña tocada.
+    for id_campana in campanas_tocadas:
+        _recalcular_campana_desde_cola(id_campana)
+
+    st.cache_data.clear()
+    return {
+        "enviados": enviados,
+        "errores": errores,
+        "omitidos": omitidos,
+        "detalle": detalle,
+    }
+
+
+def _recalcular_campana_desde_cola(id_campana):
+    archivo = obtener_archivo()
+    hoja_cola = archivo.worksheet("COLA_ENVIO")
+    valores = hoja_cola.get_all_values()
+    if len(valores) <= 1:
+        return
+
+    enc = [str(x).strip() for x in valores[0]]
+    if "ID_CAMPAÑA" not in enc or "ESTADO" not in enc:
+        return
+    i_camp = enc.index("ID_CAMPAÑA")
+    i_estado = enc.index("ESTADO")
+
+    estados = []
+    for f in valores[1:]:
+        camp = str(f[i_camp] if len(f) > i_camp else "").strip()
+        if camp == str(id_campana).strip():
+            estados.append(str(f[i_estado] if len(f) > i_estado else "").strip().upper())
+
+    if not estados:
+        return
+
+    total = len(estados)
+    enviados = sum(e == "ENVIADO" for e in estados)
+    errores = sum(e in {"ERROR", "BLOQUEADO"} for e in estados)
+    pendientes = sum(e in {"BORRADOR", "PENDIENTE", "ENVIANDO"} for e in estados)
+
+    if pendientes > 0:
+        estado_camp = "EN PROCESO" if enviados or errores else "PROGRAMADA"
+    elif errores > 0:
+        estado_camp = "FINALIZADA CON ERRORES"
+    else:
+        estado_camp = "FINALIZADA"
+
+    _actualizar_campos_campana(
+        id_campana,
+        {
+            "TOTAL_CLIENTES": total,
+            "ENVIADOS": enviados,
+            "PENDIENTES": pendientes,
+            "ERRORES": errores,
+            "ESTADO": estado_camp,
+        },
+    )
+
 
 # ============================================================
 # ESTILOS
@@ -4866,6 +5098,68 @@ elif menu == "⚙️ Configuración":
             st.success("✅ Credenciales de Gmail listas para enviar mediante Gmail API")
         except Exception as e:
             st.error(f"No pude inicializar Gmail API: {e}")
+
+        st.markdown("#### 🚀 Motor de envío")
+        st.caption(
+            "Solo procesa campañas PROGRAMADA cuya fecha/hora ya llegó. "
+            "Las campañas BORRADOR o PREPARADA nunca se envían."
+        )
+
+        col_test, col_motor = st.columns(2)
+
+        with col_test:
+            st.markdown("**Prueba aislada**")
+            email_prueba = st.text_input(
+                "Correo de prueba",
+                value=email_oauth,
+                key="gmail_email_prueba"
+            )
+            if st.button("📨 Enviar correo de prueba", key="gmail_enviar_prueba"):
+                try:
+                    r = enviar_mensaje_gmail(
+                        cred_gmail,
+                        email_prueba,
+                        "Prueba Masivos Bravo",
+                        "<p>Hola,</p><p>Este es un correo de prueba enviado desde <b>Masivos Bravo</b> mediante Gmail API.</p><p>Bravo S.A.S.</p>",
+                    )
+                    st.success(f"✅ Prueba enviada. Gmail ID: {r.get('id', '')}")
+                except Exception as e:
+                    st.error(f"No pude enviar la prueba: {e}")
+
+        with col_motor:
+            st.markdown("**Campañas vencidas**")
+            st.warning(
+                "Este botón SÍ envía correos reales de campañas PROGRAMADA "
+                "cuya FECHA_PROG ya haya llegado."
+            )
+            confirmar_motor = st.checkbox(
+                "Confirmo que deseo procesar los envíos vencidos",
+                key="confirmar_motor_gmail"
+            )
+            if st.button(
+                "🚀 Procesar campañas programadas",
+                type="primary",
+                disabled=not confirmar_motor,
+                key="procesar_motor_gmail"
+            ):
+                try:
+                    with st.spinner("Procesando envíos..."):
+                        resultado = procesar_campanas_programadas_gmail(
+                            cred_gmail,
+                            limite=100
+                        )
+                    st.success(
+                        f"Proceso terminado: {resultado['enviados']} enviados, "
+                        f"{resultado['errores']} errores."
+                    )
+                    if resultado["detalle"]:
+                        st.dataframe(
+                            pd.DataFrame(resultado["detalle"]),
+                            use_container_width=True,
+                            hide_index=True
+                        )
+                except Exception as e:
+                    st.error(f"No pude procesar las campañas: {e}")
 
         if st.button("Desconectar Google", key="desconectar_google_oauth"):
             st.session_state.pop("google_oauth_credentials", None)
