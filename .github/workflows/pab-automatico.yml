@@ -1,19 +1,25 @@
-name: Automatización PaB
+name: PaB automático 8AM Bogotá
 
 on:
   workflow_dispatch:
-
   schedule:
-    # 08:00 a. m. Colombia (UTC-5) = 13:00 UTC
-    - cron: "0 13 * * *"
+    # GitHub Actions usa UTC. 13:05 UTC = 08:05 America/Bogota.
+    - cron: "5 13 * * *"
+
+concurrency:
+  group: pab-automatico
+  cancel-in-progress: false
 
 jobs:
-  pab-automatico:
+  enviar-pab:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     env:
       MI_JSON: ${{ secrets.MI_JSON }}
+      GMAIL_CLIENT_ID: ${{ secrets.GMAIL_CLIENT_ID }}
+      GMAIL_CLIENT_SECRET: ${{ secrets.GMAIL_CLIENT_SECRET }}
+      GMAIL_REFRESH_TOKEN: ${{ secrets.GMAIL_REFRESH_TOKEN }}
 
     steps:
       - name: Descargar repositorio
@@ -25,7 +31,9 @@ jobs:
           python-version: "3.12"
 
       - name: Instalar dependencias
-        run: pip install -r requirements.txt
+        run: |
+          python -m pip install --upgrade pip
+          pip install gspread google-auth google-api-python-client
 
-      - name: Generar recordatorios PaB
-        run: python pab_auto.py
+      - name: Generar y enviar recordatorios PaB
+        run: python pab_send_auto.py
