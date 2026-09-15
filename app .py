@@ -256,19 +256,69 @@ BRAVO_WHATSAPP = "573012411885"
 BRAVO_WHATSAPP_DISPLAY = "301 241 1885"
 
 def _texto_a_html_bravo(texto):
+    """Convierte texto de PLANTILLAS a HTML seguro para Gmail sin comprimir el ancho."""
     import html as _html
+
     t = str(texto or "").strip()
-    if not t: return ""
-    if re.search(r"<\\s*(p|div|br|strong|b|ul|ol|table|a)\\b", t, flags=re.I): return t
-    bloques = [x.strip() for x in re.split(r"\
-\\s*\
-", t) if x.strip()]
-    return "".join('<p style="margin:0 0 16px;line-height:1.65;color:#333b55;font-size:15px;">'+_html.escape(b).replace("\
-","<br>")+'</p>' for b in bloques)
+    if not t:
+        return ""
+
+    # Si la plantilla ya contiene HTML real, se respeta tal cual.
+    if re.search(r"<\s*(p|div|br|strong|b|ul|ol|table|a|span)\b", t, flags=re.I):
+        return t
+
+    # Normalizar saltos de línea provenientes de Sheets.
+    t = t.replace("\r\n", "\n").replace("\r", "\n")
+    bloques = [b.strip() for b in re.split(r"\n\s*\n", t) if b.strip()]
+    if not bloques:
+        bloques = [t]
+
+    html_bloques = []
+    for bloque in bloques:
+        seguro = _html.escape(bloque).replace("\n", "<br>")
+        html_bloques.append(
+            '<p style="margin:0 0 16px 0; padding:0; '
+            'font-family:Arial,Helvetica,sans-serif; font-size:15px; '
+            'line-height:24px; color:#333b55; text-align:left; '
+            'word-break:normal; overflow-wrap:break-word; white-space:normal;">'
+            + seguro + '</p>'
+        )
+    return "".join(html_bloques)
+
 
 def envolver_html_bravo(cuerpo):
+    """Maqueta clásica Bravo, basada en tablas para máxima compatibilidad con Gmail."""
     contenido = _texto_a_html_bravo(cuerpo)
-    return f"""<!doctype html><html><body style='margin:0;padding:0;background:#f3f4f8;font-family:Arial,Helvetica,sans-serif;'><table role='presentation' width='100%' cellspacing='0' cellpadding='0' style='background:#f3f4f8;padding:24px 10px;'><tr><td align='center'><table role='presentation' width='600' cellspacing='0' cellpadding='0' style='max-width:600px;width:100%;background:#fff;border-top:5px solid #3d2d8f;border-radius:6px;overflow:hidden;'><tr><td align='center' style='padding:24px 28px 14px;'><img src='{BRAVO_LOGO_URL}' alt='Bravo' width='115' style='display:block;max-width:115px;height:auto;'><div style='font-size:10px;color:#8b8f9b;margin-top:6px;'>Información importante sobre tu proceso</div></td></tr><tr><td style='border-top:1px solid #e8e8ee;padding:24px 34px 8px;'>{contenido}</td></tr><tr><td style='padding:8px 34px 26px;'><div style='border-top:1px solid #e5e5eb;margin-bottom:20px;'></div><a href='https://wa.me/{BRAVO_WHATSAPP}' style='background:#40318f;color:#fff;text-decoration:none;font-weight:bold;font-size:13px;padding:13px 18px;border-radius:4px;display:inline-block;margin-right:8px;'>Contactar a Bravo por WhatsApp</a><a href='mailto:{GMAIL_REPLY_TO}' style='border:1px solid #40318f;color:#40318f;text-decoration:none;font-weight:bold;font-size:13px;padding:12px 18px;border-radius:4px;display:inline-block;'>Contactar por correo</a></td></tr><tr><td style='background:#fafafa;padding:18px 34px;border-bottom:4px solid #27bfd0;color:#62677a;font-size:11px;line-height:1.6;'><b style='color:#3d2d8f;'>Bravo S.A.S.</b><br>WhatsApp: <a href='https://wa.me/{BRAVO_WHATSAPP}' style='color:#3d2d8f;'>{BRAVO_WHATSAPP_DISPLAY}</a><br>Lunes a viernes, 8:00 a.m. - 6:00 p.m.</td></tr></table></td></tr></table></body></html>"""
+    return f"""<!doctype html>
+<html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background-color:#f3f4f8;font-family:Arial,Helvetica,sans-serif;">
+<table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="width:100%;background-color:#f3f4f8;margin:0;padding:0;">
+<tr><td align="center" style="padding:24px 12px;">
+<table role="presentation" border="0" cellpadding="0" cellspacing="0" width="600" style="width:600px;max-width:600px;background-color:#ffffff;border-collapse:collapse;border-top:5px solid #3d2d8f;">
+<tr><td align="center" width="600" style="width:600px;padding:24px 34px 16px;box-sizing:border-box;">
+<img src="{BRAVO_LOGO_URL}" alt="Bravo" width="115" style="display:block;width:115px;max-width:115px;height:auto;border:0;">
+<div style="font-family:Arial,Helvetica,sans-serif;font-size:10px;line-height:16px;color:#8b8f9b;margin-top:6px;">Información importante sobre tu proceso</div>
+</td></tr>
+<tr><td width="600" style="width:600px;border-top:1px solid #e8e8ee;padding:24px 34px 8px;box-sizing:border-box;min-width:0;">
+<table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="width:100%;border-collapse:collapse;table-layout:fixed;">
+<tr><td style="width:100%;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:24px;color:#333b55;word-break:normal;overflow-wrap:break-word;white-space:normal;">{contenido}</td></tr>
+</table>
+</td></tr>
+<tr><td width="600" style="width:600px;padding:8px 34px 26px;box-sizing:border-box;">
+<div style="border-top:1px solid #e5e5eb;margin:0 0 20px 0;"></div>
+<a href="https://wa.me/{BRAVO_WHATSAPP}" style="background-color:#40318f;color:#ffffff;text-decoration:none;font-weight:bold;font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:18px;padding:13px 18px;border-radius:4px;display:inline-block;margin:0 8px 8px 0;">Contactar a Bravo por WhatsApp</a>
+<a href="mailto:{GMAIL_REPLY_TO}" style="border:1px solid #40318f;color:#40318f;text-decoration:none;font-weight:bold;font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:18px;padding:12px 18px;border-radius:4px;display:inline-block;margin:0 0 8px 0;">Contactar por correo</a>
+</td></tr>
+<tr><td width="600" style="width:600px;background-color:#fafafa;padding:18px 34px;border-bottom:4px solid #27bfd0;box-sizing:border-box;font-family:Arial,Helvetica,sans-serif;color:#62677a;font-size:11px;line-height:18px;">
+<b style="color:#3d2d8f;">Bravo S.A.S.</b><br>
+WhatsApp: <a href="https://wa.me/{BRAVO_WHATSAPP}" style="color:#3d2d8f;text-decoration:underline;">{BRAVO_WHATSAPP_DISPLAY}</a><br>
+Lunes a viernes, 8:00 a.m. - 6:00 p.m.
+</td></tr>
+</table>
+</td></tr></table>
+</body></html>"""
+
 
 def construir_mensaje_gmail(destinatario, asunto, cuerpo_html, remitente=GMAIL_FROM):
     destinatario = str(destinatario or "").strip()
@@ -618,16 +668,13 @@ def obtener_archivo():
     )
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner=False)
 def cargar_hoja(nombre):
-
+    """Lee una hoja con values_get: evita worksheet(), que pide metadata extra a Sheets."""
     archivo = obtener_archivo()
-
-    hoja = archivo.worksheet(
-        nombre
-    )
-
-    valores = hoja.get_all_values()
+    nombre_seguro = str(nombre).replace("'", "''")
+    respuesta = archivo.values_get(f"'{nombre_seguro}'!A:ZZ")
+    valores = respuesta.get("values", [])
 
     if not valores:
         return pd.DataFrame()
@@ -2890,7 +2937,10 @@ def enviar_campana_ahora_gmail(id_campana, credenciales):
             detalle.append({"EMAIL": email, "RESULTADO": f"ERROR: {e}"})
 
     _recalcular_campana_desde_cola(id_campana)
-    st.cache_data.clear()
+    # No vaciar todo el caché aquí: hacerlo obligaba a releer CLIENTES, PRUEBAS,
+    # CAMPAÑAS, COLA_ENVIO, RESPUESTAS, PAB_PROXIMOS y PLANTILLAS justo después
+    # del envío y era la principal causa del 429. El botón Actualizar datos
+    # sigue permitiendo refrescar manualmente cuando sea necesario.
 
     return {
         "enviados": enviados,
