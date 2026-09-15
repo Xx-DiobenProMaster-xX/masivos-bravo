@@ -1,1280 +1,421 @@
 import os
 import json
 import re
+import base64
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from email.message import EmailMessage
 
 import gspread
-from google.oauth2.service_account import Credentials
+from google.oauth2.service_account import Credentials as ServiceCredentials
+from google.oauth2.credentials import Credentials as OAuthCredentials
+from googleapiclient.discovery import build
 
-
-# ============================================================
-# CONFIGURACIÓN
-# ============================================================
 
 TZ = ZoneInfo("America/Bogota")
-
 MASIVOS_ID = "1VGdEUGRDFxBjKRLF1KF7EcHIBf3f8ujtN3iPm6TatjI"
+CARTERA_BEREX_ID = "13Vf32LzRI2V95dIUqfevzm-ZmsDR3d17UTre_7XJ-UU"
+EXCLUSIONES_ID = "15sbBsZcMj8PMkHXByLqjcuqtvsY_2FGYiwhkKPmfIYM"
 
-CARTERA_BEREX_ID = (
-    "13Vf32LzRI2V95dIUqfevzm-ZmsDR3d17UTre_7XJ-UU"
-)
-
-EXCLUSIONES_ID = (
-    "15sbBsZcMj8PMkHXByLqjcuqtvsY_2FGYiwhkKPmfIYM"
-)
-
-HOJA_PAB = "PAB_PROXIMOS"
-HOJA_CLIENTES = "CLIENTES"
-HOJA_PLANTILLAS = "PLANTILLAS"
-HOJA_COLA = "COLA_ENVIO"
-HOJA_CAMPANAS = "CAMPAÑAS"
-HOJA_EXCLUIR = "Excluir_correo"
-
-INFO_CLIENTES_V2 = [
-    "Info_Clientes_V2",
-    "Hoja Info_Clientes_V2",
-    ". Hoja Info_Clientes_V2",
+GMAIL_FROM = "acuerdosRTD@resuelvetudeuda.com"
+GMAIL_SCOPES = [
+    "openid",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/userinfo.profile",
+    "https://www.googleapis.com/auth/gmail.send",
+    "https://www.googleapis.com/auth/drive.file",
 ]
 
-ESTADO_NUEVO = "PENDIENTE"
 
-# Todos los PaB quedan asignados a Camila
-ENCARGADO_PAB = "Camila"
-
-
-# ============================================================
-# GOOGLE
-# ============================================================
-
-def obtener_gc():
-
-    secreto = os.environ.get(
-        "MI_JSON",
-        ""
-    ).strip()
-
-    if not secreto:
-
-        raise RuntimeError(
-            "No existe MI_JSON en GitHub Secrets."
-        )
-
-    info = json.loads(
-        secreto
-    )
-
-    scopes = [
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive",
-    ]
-
-    credenciales = (
-        Credentials
-        .from_service_account_info(
-            info,
-            scopes=scopes
-        )
-    )
-
-    return gspread.authorize(
-        credenciales
-    )
+def txt(v):
+    return "" if v is None else str(v).strip()
 
 
-def obtener_hoja(
-    archivo_id,
-    nombre_hoja
-):
-
-    gc = obtener_gc()
-
-    return (
-        gc
-        .open_by_key(
-            archivo_id
-        )
-        .worksheet(
-            nombre_hoja
-        )
-    )
+def ref(v):
+    v = txt(v)
+    if re.fullmatch(r"\d+\.0+", v):
+        v = v.split(".")[0]
+    return re.sub(r"\D", "", v)
 
 
-# ============================================================
-# AUXILIARES
-# ============================================================
-
-def texto(valor):
-
-    if valor is None:
-        return ""
-
-    return str(
-        valor
-    ).strip()
+def headers(row):
+    return {txt(v): i for i, v in enumerate(row)}
 
 
-def referencia(valor):
-
-    valor = texto(
-        valor
-    )
-
-    if re.fullmatch(
-        r"\d+\.0+",
-        valor
-    ):
-
-        valor = valor.split(
-            "."
-        )[0]
-
-    return re.sub(
-        r"\D",
-        "",
-        valor
-    )
+def getv(row, h, name):
+    i = h.get(name)
+    return txt(row[i]) if i is not None and len(row) > i else ""
 
 
-def mapa_headers(
-    headers
-):
-
-    return {
-        str(valor).strip(): i
-        for i, valor in enumerate(headers)
-    }
-
-
-def valor_fila(
-    fila,
-    headers,
-    nombre
-):
-
-    if nombre not in headers:
-        return ""
-
-    posicion = headers[
-        nombre
-    ]
-
-    if len(fila) <= posicion:
-        return ""
-
-    return texto(
-        fila[posicion]
-    )
-
-
-def convertir_fecha(
-    valor
-):
-
-    valor = texto(
-        valor
-    )
-
-    if not valor:
-        return None
-
-    formatos = [
-        "%d/%m/%Y",
-        "%Y-%m-%d",
-        "%d-%m-%Y",
-        "%Y/%m/%d",
-    ]
-
-    for formato in formatos:
-
+def fecha(v):
+    v = txt(v)
+    for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%Y/%m/%d"):
         try:
-
-            return datetime.strptime(
-                valor[:10],
-                formato
-            ).date()
-
+            return datetime.strptime(v[:10], fmt).date()
         except ValueError:
             pass
-
     return None
 
 
-def es_mora_180(
-    valor
-):
-
-    valor = (
-        texto(valor)
-        .upper()
-        .replace("_", " ")
-    )
-
-    valor = re.sub(
-        r"\s+",
-        " ",
-        valor
-    ).strip()
-
-    return valor in {
-        "MORA 180",
-        "180"
-    }
+def es_mora_180(v):
+    v = re.sub(r"\s+", " ", txt(v).upper().replace("_", " ")).strip()
+    return v in {"MORA 180", "180"}
 
 
-def reemplazar_variables(
-    contenido,
-    variables
-):
-
-    contenido = texto(
-        contenido
-    )
-
-    for variable, valor in variables.items():
-
-        contenido = contenido.replace(
-            variable,
-            str(valor)
-        )
-
-    return contenido
-
-
-def moneda(
-    valor
-):
-
-    valor = texto(
-        valor
-    )
-
-    if not valor:
-        return "$0"
-
-    limpio = (
-        valor
-        .replace("$", "")
-        .replace("COP", "")
-        .replace(" ", "")
-    )
-
-    # 8.000.000
-    if (
-        "." in limpio
-        and "," not in limpio
-    ):
-
-        partes = limpio.split(
-            "."
-        )
-
-        if all(
-            len(parte) == 3
-            for parte in partes[1:]
-        ):
-
-            limpio = "".join(
-                partes
-            )
-
-    # 8,000,000
-    elif (
-        "," in limpio
-        and "." not in limpio
-    ):
-
-        limpio = limpio.replace(
-            ",",
-            ""
-        )
-
-    # 8.000.000,50
-    elif (
-        "." in limpio
-        and "," in limpio
-    ):
-
-        limpio = (
-            limpio
-            .replace(".", "")
-            .replace(",", ".")
-        )
-
-    limpio = re.sub(
-        r"[^0-9.\-]",
-        "",
-        limpio
-    )
-
+def moneda(v):
+    s = txt(v).replace("$", "").replace("COP", "").replace(" ", "")
+    if "." in s and "," not in s:
+        p = s.split(".")
+        if len(p) > 1 and all(len(x) == 3 for x in p[1:]):
+            s = "".join(p)
+    elif "," in s and "." not in s:
+        s = s.replace(",", "")
+    elif "." in s and "," in s:
+        s = s.replace(".", "").replace(",", ".")
+    s = re.sub(r"[^0-9.\-]", "", s)
     try:
+        n = float(s)
+    except Exception:
+        n = 0
+    return "$" + f"{n:,.0f}".replace(",", ".")
 
-        numero = float(
-            limpio
-        )
 
-    except ValueError:
-
-        numero = 0
-
-    return (
-        "$"
-        + f"{numero:,.0f}".replace(
-            ",",
-            "."
-        )
+def gc():
+    raw = os.environ.get("MI_JSON", "").strip()
+    if not raw:
+        raise RuntimeError("Falta GitHub Secret MI_JSON.")
+    info = json.loads(raw)
+    creds = ServiceCredentials.from_service_account_info(
+        info,
+        scopes=[
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive",
+        ],
     )
+    return gspread.authorize(creds)
 
 
-# ============================================================
-# INFO_CLIENTES_V2
-# ============================================================
-
-def cargar_info_clientes_v2():
-
-    gc = obtener_gc()
-
-    archivo = gc.open_by_key(
-        CARTERA_BEREX_ID
+def gmail_service():
+    client_id = os.environ.get("GMAIL_CLIENT_ID", "").strip()
+    client_secret = os.environ.get("GMAIL_CLIENT_SECRET", "").strip()
+    refresh_token = os.environ.get("GMAIL_REFRESH_TOKEN", "").strip()
+    if not all([client_id, client_secret, refresh_token]):
+        raise RuntimeError(
+            "Faltan GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET o GMAIL_REFRESH_TOKEN."
+        )
+    creds = OAuthCredentials(
+        token=None,
+        refresh_token=refresh_token,
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=client_id,
+        client_secret=client_secret,
+        scopes=GMAIL_SCOPES,
     )
+    return build("gmail", "v1", credentials=creds, cache_discovery=False)
 
-    hoja = None
 
-    for nombre in INFO_CLIENTES_V2:
+def send_gmail(service, to, subject, html):
+    msg = EmailMessage()
+    msg["To"] = to
+    msg["From"] = f"Bravo S.A.S. <{GMAIL_FROM}>"
+    msg["Reply-To"] = GMAIL_FROM
+    msg["Subject"] = subject
+    plain = re.sub(r"<[^>]+>", " ", html)
+    plain = re.sub(r"\s+", " ", plain).strip() or "Bravo S.A.S."
+    msg.set_content(plain)
+    msg.add_alternative(html, subtype="html")
+    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")
+    return service.users().messages().send(userId="me", body={"raw": raw}).execute()
 
+
+def row_by_headers(hlist, values):
+    return [values.get(name, "") for name in hlist]
+
+
+def update_cell_by_header(ws, row_num, hlist, name, value):
+    if name in hlist:
+        ws.update_cell(row_num, hlist.index(name) + 1, value)
+
+
+def load_client_map(g):
+    result = {}
+
+    # CLIENTES first
+    ws = g.open_by_key(MASIVOS_ID).worksheet("CLIENTES")
+    data = ws.get_all_values()
+    if len(data) > 1:
+        h = headers(data[0])
+        for r in data[1:]:
+            rr = ref(getv(r, h, "Referencia"))
+            if rr:
+                result[rr] = {
+                    "nombre": getv(r, h, "Nombre"),
+                    "email": getv(r, h, "Email"),
+                    "mora": getv(r, h, "Mora"),
+                }
+
+    # Info_Clientes_V2 fills blanks
+    book = g.open_by_key(CARTERA_BEREX_ID)
+    ws2 = None
+    for name in ("Info_Clientes_V2", "Hoja Info_Clientes_V2", ". Hoja Info_Clientes_V2"):
         try:
+            ws2 = book.worksheet(name)
+            break
+        except gspread.WorksheetNotFound:
+            pass
+    if ws2:
+        rows = ws2.get("C:F")
+        for r in rows[1:]:
+            rr = ref(r[0] if len(r) > 0 else "")
+            if not rr:
+                continue
+            nombre = txt(r[2] if len(r) > 2 else "")
+            email = txt(r[3] if len(r) > 3 else "")
+            result.setdefault(rr, {"nombre": "", "email": "", "mora": ""})
+            if not result[rr]["nombre"] and nombre:
+                result[rr]["nombre"] = nombre
+            if not result[rr]["email"] and email:
+                result[rr]["email"] = email
+    return result
 
-            hoja = archivo.worksheet(
-                nombre
+
+def load_exclusions(g):
+    ws = g.open_by_key(EXCLUSIONES_ID).worksheet("Excluir_correo")
+    rows = ws.get_all_values()
+    return {ref(r[0]) for r in rows[1:] if r and ref(r[0])}
+
+
+def load_templates(g):
+    ws = g.open_by_key(MASIVOS_ID).worksheet("PLANTILLAS")
+    rows = ws.get_all_values()
+    if len(rows) <= 1:
+        raise RuntimeError("PLANTILLAS está vacía.")
+    h = headers(rows[0])
+    out = {}
+    for r in rows[1:]:
+        pid = (getv(r, h, "ID_PLANTILLA") or getv(r, h, "PLANTILLA")).upper()
+        if not pid:
+            continue
+        estado = getv(r, h, "ESTADO").upper() or "ACTIVA"
+        if estado == "ACTIVA":
+            out[pid] = {
+                "asunto": getv(r, h, "ASUNTO"),
+                "cuerpo": getv(r, h, "CUERPO"),
+            }
+    return out
+
+
+def render(template, values):
+    s = txt(template)
+    for k, v in values.items():
+        s = s.replace(k, str(v))
+    return s
+
+
+def ensure_campaign(book, campaign_id, now):
+    ws = book.worksheet("CAMPAÑAS")
+    rows = ws.get_all_values()
+    hlist = [txt(x) for x in rows[0]]
+    h = headers(hlist)
+    for n, r in enumerate(rows[1:], start=2):
+        if getv(r, h, "ID_CAMPAÑA") == campaign_id:
+            return n, ws, hlist
+    values = {
+        "ID_CAMPAÑA": campaign_id,
+        "NOMBRE_CAMPAÑA": f"Recordatorios PaB {now.strftime('%d/%m/%Y')}",
+        "PLANTILLA": "PAB",
+        "FILTRO": "PAB",
+        "FECHA_ENVIO": now.strftime("%d/%m/%Y"),
+        "HORA_ENVIO": "08:00",
+        "ESTADO": "EN PROCESO",
+        "TOTAL_CLIENTES": 0,
+        "ENVIADOS": 0,
+        "PENDIENTES": 0,
+        "ERRORES": 0,
+        "FECHA_CREACIÓN": now.strftime("%d/%m/%Y %H:%M:%S"),
+        "COMENTARIOS": "Campaña automática GitHub Actions 08:00 America/Bogota",
+    }
+    ws.append_row(row_by_headers(hlist, values), value_input_option="USER_ENTERED")
+    return len(rows) + 1, ws, hlist
+
+
+def recalc_campaign(book, campaign_id):
+    q = book.worksheet("COLA_ENVIO")
+    qr = q.get_all_values()
+    qh = headers(qr[0])
+    states = []
+    for r in qr[1:]:
+        if getv(r, qh, "ID_CAMPAÑA") == campaign_id:
+            states.append(getv(r, qh, "ESTADO").upper())
+    total = len(states)
+    sent = sum(x == "ENVIADO" for x in states)
+    errors = sum(x in {"ERROR", "BLOQUEADO"} for x in states)
+    pending = sum(x in {"BORRADOR", "PENDIENTE", "ENVIANDO"} for x in states)
+
+    c = book.worksheet("CAMPAÑAS")
+    cr = c.get_all_values()
+    chlist = [txt(x) for x in cr[0]]
+    ch = headers(chlist)
+    for n, r in enumerate(cr[1:], start=2):
+        if getv(r, ch, "ID_CAMPAÑA") == campaign_id:
+            update_cell_by_header(c, n, chlist, "TOTAL_CLIENTES", total)
+            update_cell_by_header(c, n, chlist, "ENVIADOS", sent)
+            update_cell_by_header(c, n, chlist, "PENDIENTES", pending)
+            update_cell_by_header(c, n, chlist, "ERRORES", errors)
+            state = "FINALIZADA" if pending == 0 and errors == 0 else (
+                "FINALIZADA CON ERRORES" if pending == 0 else "EN PROCESO"
             )
-
+            update_cell_by_header(c, n, chlist, "ESTADO", state)
             break
 
-        except gspread.WorksheetNotFound:
-            continue
 
-    if hoja is None:
-
-        raise RuntimeError(
-            "No encontré la pestaña Info_Clientes_V2."
-        )
-
-    # C = Referencia
-    # E = Nombre
-    # F = Email
-
-    datos = hoja.get(
-        "C:F"
-    )
-
-    resultado = {}
-
-    for fila in datos[1:]:
-
-        ref = referencia(
-            fila[0]
-            if len(fila) > 0
-            else ""
-        )
-
-        if not ref:
-            continue
-
-        nombre = texto(
-            fila[2]
-            if len(fila) > 2
-            else ""
-        )
-
-        email = texto(
-            fila[3]
-            if len(fila) > 3
-            else ""
-        )
-
-        if ref not in resultado:
-
-            resultado[ref] = {
-                "nombre": "",
-                "email": ""
-            }
-
-        if (
-            not resultado[ref]["nombre"]
-            and nombre
-        ):
-
-            resultado[ref][
-                "nombre"
-            ] = nombre
-
-        if (
-            not resultado[ref]["email"]
-            and email
-        ):
-
-            resultado[ref][
-                "email"
-            ] = email
-
-    return resultado
-
-
-# ============================================================
-# CLIENTES
-# ============================================================
-
-def cargar_clientes():
-
-    hoja = obtener_hoja(
-        MASIVOS_ID,
-        HOJA_CLIENTES
-    )
-
-    datos = hoja.get_all_values()
-
-    if len(datos) <= 1:
-        return {}
-
-    h = mapa_headers(
-        datos[0]
-    )
-
-    resultado = {}
-
-    for fila in datos[1:]:
-
-        ref = referencia(
-            valor_fila(
-                fila,
-                h,
-                "Referencia"
-            )
-        )
-
-        if not ref:
-            continue
-
-        resultado[ref] = {
-
-            "nombre": valor_fila(
-                fila,
-                h,
-                "Nombre"
-            ),
-
-            "email": valor_fila(
-                fila,
-                h,
-                "Email"
-            ),
-
-            "mora": valor_fila(
-                fila,
-                h,
-                "Mora"
-            )
-        }
-
-    return resultado
-
-
-# ============================================================
-# EXCLUSIONES
-# ============================================================
-
-def cargar_exclusiones():
-
-    hoja = obtener_hoja(
-        EXCLUSIONES_ID,
-        HOJA_EXCLUIR
-    )
-
-    datos = hoja.get_all_values()
-
-    resultado = set()
-
-    for fila in datos[1:]:
-
-        if not fila:
-            continue
-
-        ref = referencia(
-            fila[0]
-        )
-
-        if ref:
-
-            resultado.add(
-                ref
-            )
-
-    return resultado
-
-
-# ============================================================
-# PLANTILLAS
-# ============================================================
-
-def cargar_plantillas():
-
-    hoja = obtener_hoja(
-        MASIVOS_ID,
-        HOJA_PLANTILLAS
-    )
-
-    datos = hoja.get_all_values()
-
-    if len(datos) <= 1:
-
-        raise RuntimeError(
-            "PLANTILLAS no tiene información."
-        )
-
-    h = mapa_headers(
-        datos[0]
-    )
-
-    resultado = {}
-
-    for fila in datos[1:]:
-
-        # ID
-        plantilla = ""
-
-        if "ID_PLANTILLA" in h:
-
-            plantilla = valor_fila(
-                fila,
-                h,
-                "ID_PLANTILLA"
-            )
-
-        elif "PLANTILLA" in h:
-
-            plantilla = valor_fila(
-                fila,
-                h,
-                "PLANTILLA"
-            )
-
-        plantilla = plantilla.upper()
-
-        if not plantilla:
-            continue
-
-        # ASUNTO
-        asunto = valor_fila(
-            fila,
-            h,
-            "ASUNTO"
-        )
-
-        # CUERPO
-        cuerpo = valor_fila(
-            fila,
-            h,
-            "CUERPO"
-        )
-
-        if not cuerpo:
-
-            raise RuntimeError(
-                f"La plantilla {plantilla} no tiene CUERPO."
-            )
-
-        # ESTADO
-        estado = valor_fila(
-            fila,
-            h,
-            "ESTADO"
-        ).upper()
-
-        if not estado:
-            estado = "ACTIVA"
-
-        resultado[
-            plantilla
-        ] = {
-
-            "asunto":
-                asunto,
-
-            "cuerpo":
-                cuerpo,
-
-            "estado":
-                estado
-        }
-
-    return resultado
-
-
-# ============================================================
-# IDS EXISTENTES EN COLA
-# ============================================================
-
-def cargar_ids_cola():
-
-    hoja = obtener_hoja(
-        MASIVOS_ID,
-        HOJA_COLA
-    )
-
-    datos = hoja.get_all_values()
-
-    if len(datos) <= 1:
-        return set()
-
-    h = mapa_headers(
-        datos[0]
-    )
-
-    if "ID_ENVIO" not in h:
-        return set()
-
-    resultado = set()
-
-    for fila in datos[1:]:
-
-        id_envio = valor_fila(
-            fila,
-            h,
-            "ID_ENVIO"
-        )
-
-        if id_envio:
-
-            resultado.add(
-                id_envio
-            )
-
-    return resultado
-
-
-# ============================================================
-# CREAR CAMPAÑA
-# ============================================================
-
-def asegurar_campana(
-    id_campana,
-    cantidad
-):
-
-    hoja = obtener_hoja(
-        MASIVOS_ID,
-        HOJA_CAMPANAS
-    )
-
-    datos = hoja.get_all_values()
-
-    if not datos:
-
-        raise RuntimeError(
-            "CAMPAÑAS no tiene encabezados."
-        )
-
-    headers = datos[0]
-
-    h = mapa_headers(
-        headers
-    )
-
-    # Si ya existe no la vuelve a crear
-    for fila in datos[1:]:
-
-        actual = valor_fila(
-            fila,
-            h,
-            "ID_CAMPAÑA"
-        )
-
-        if actual == id_campana:
-            return
-
-    nueva = [
-        ""
-    ] * len(headers)
-
-    ahora = datetime.now(
-        TZ
-    )
-
-    valores = {
-
-        "ID_CAMPAÑA":
-            id_campana,
-
-        "NOMBRE_CAMPAÑA":
-            "Recordatorios PaB automáticos",
-
-        "PLANTILLA":
-            "PAB",
-
-        "FILTRO":
-            "PAB",
-
-        "FECHA_ENVIO":
-            ahora.strftime(
-                "%d/%m/%Y"
-            ),
-
-        "HORA_ENVIO":
-            ahora.strftime(
-                "%H:%M"
-            ),
-
-        "ESTADO":
-            "EN PROCESO",
-
-        "TOTAL_CLIENTES":
-            cantidad,
-
-        "ENVIADOS":
-            0,
-
-        "PENDIENTES":
-            cantidad,
-
-        "ERRORES":
-            0,
-
-        "FECHA_CREACIÓN":
-            ahora.strftime(
-                "%d/%m/%Y %H:%M:%S"
-            ),
-
-        "COMENTARIOS":
-            (
-                "Creada automáticamente "
-                "por GitHub Actions"
-            )
-    }
-
-    for columna, valor in valores.items():
-
-        if columna in h:
-
-            nueva[
-                h[columna]
-            ] = valor
-
-    hoja.append_row(
-        nueva,
-        value_input_option="USER_ENTERED"
-    )
-
-
-# ============================================================
-# AUTOMATIZACIÓN PAB
-# ============================================================
-
-def generar_recordatorios():
-
-    hoja_pab = obtener_hoja(
-        MASIVOS_ID,
-        HOJA_PAB
-    )
-
-    hoja_cola = obtener_hoja(
-        MASIVOS_ID,
-        HOJA_COLA
-    )
-
-    pab = hoja_pab.get_all_values()
-
-    cola = hoja_cola.get_all_values()
-
-    if len(pab) <= 1:
-
-        print(
-            "PAB_PROXIMOS no tiene registros."
-        )
-
+def main():
+    now = datetime.now(TZ)
+    today = now.date()
+    g = gc()
+    gmail = gmail_service()
+    book = g.open_by_key(MASIVOS_ID)
+
+    pab_ws = book.worksheet("PAB_PROXIMOS")
+    pab_rows = pab_ws.get_all_values()
+    if len(pab_rows) <= 1:
+        print("Sin PAB_PROXIMOS.")
         return
+    phlist = [txt(x) for x in pab_rows[0]]
+    ph = headers(phlist)
 
-    if not cola:
+    queue_ws = book.worksheet("COLA_ENVIO")
+    queue_rows = queue_ws.get_all_values()
+    qhlist = [txt(x) for x in queue_rows[0]]
+    qh = headers(qhlist)
 
-        raise RuntimeError(
-            "COLA_ENVIO no tiene encabezados."
-        )
+    clients = load_client_map(g)
+    exclusions = load_exclusions(g)
+    templates = load_templates(g)
+    campaign_id = f"PAB-{today.strftime('%Y%m%d')}"
+    ensure_campaign(book, campaign_id, now)
 
-    hp = mapa_headers(
-        pab[0]
-    )
+    # Existing queue by deterministic ID
+    existing = {}
+    for n, r in enumerate(queue_rows[1:], start=2):
+        eid = getv(r, qh, "ID_ENVIO")
+        if eid:
+            existing[eid] = (n, r)
 
-    headers_cola = cola[0]
+    sent = errors = skipped = 0
 
-    hc = mapa_headers(
-        headers_cola
-    )
-
-    clientes = cargar_clientes()
-
-    info_v2 = (
-        cargar_info_clientes_v2()
-    )
-
-    exclusiones = (
-        cargar_exclusiones()
-    )
-
-    plantillas = (
-        cargar_plantillas()
-    )
-
-    ids_cola = (
-        cargar_ids_cola()
-    )
-
-    hoy = datetime.now(
-        TZ
-    ).date()
-
-    ahora = datetime.now(
-        TZ
-    )
-
-    id_campana = (
-        "PAB-"
-        + hoy.strftime(
-            "%Y%m%d"
-        )
-    )
-
-    resumen = {
-
-        "candidatos": 0,
-
-        "agregados_borrador": 0,
-
-        "sin_email": 0,
-
-        "mora_180": 0,
-
-        "excluir_correo": 0,
-
-        "duplicados": 0,
-
-        "ejemplos": []
-    }
-
-    filas_nuevas = []
-
-    for fila in pab[1:]:
-
-        ref = referencia(
-            valor_fila(
-                fila,
-                hp,
-                "REFERENCIA"
-            )
-        )
-
-        fecha = convertir_fecha(
-            valor_fila(
-                fila,
-                hp,
-                "FECHA_PAB"
-            )
-        )
-
-        if not ref or not fecha:
+    for pab_row_num, r in enumerate(pab_rows[1:], start=2):
+        payment_date = fecha(getv(r, ph, "FECHA_PAB"))
+        if payment_date is None:
+            continue
+        days = (payment_date - today).days
+        if days not in {0, 3}:
             continue
 
-        dias = (
-            fecha - hoy
-        ).days
+        pid = "PAB000" if days == 0 else "PAB003"
+        flag = "AVISO_HOY" if days == 0 else "AVISO_3_DIAS"
+        if getv(r, ph, flag):
+            skipped += 1
+            continue
 
-        # 3 días antes
-        if dias == 3:
+        rr = ref(getv(r, ph, "REFERENCIA"))
+        if not rr or rr in exclusions:
+            skipped += 1
+            continue
 
-            plantilla_id = (
-                "PAB003"
-            )
+        client = clients.get(rr, {})
+        nombre = getv(r, ph, "NOMBRE") or client.get("nombre", "")
+        email = getv(r, ph, "EMAIL") or client.get("email", "")
+        mora = getv(r, ph, "MORA") or client.get("mora", "")
+        if not email or es_mora_180(mora):
+            skipped += 1
+            continue
 
-            tipo_aviso = (
-                "Recordatorio 3 días antes"
-            )
+        tpl = templates.get(pid)
+        if not tpl:
+            print(f"ERROR {rr}: falta plantilla {pid}")
+            errors += 1
+            continue
 
-        # El mismo día
-        elif dias == 0:
+        values = {
+            "{{NOMBRE}}": nombre or "Cliente",
+            "{{REFERENCIA}}": rr,
+            "{{FECHA_PAB}}": getv(r, ph, "FECHA_PAB"),
+            "{{VALOR_PAB}}": moneda(getv(r, ph, "VALOR_PAB")),
+            "{{TIPO_AVISO}}": "Pago programado para hoy" if days == 0 else "Recordatorio 3 días antes",
+        }
+        subject = render(tpl["asunto"], values)
+        body = render(tpl["cuerpo"], values)
+        eid = f"ENV-PAB-{today.strftime('%Y%m%d')}-{rr}-{pid}"
 
-            plantilla_id = (
-                "PAB000"
-            )
-
-            tipo_aviso = (
-                "Pago programado para hoy"
-            )
-
+        if eid in existing:
+            row_num, qr = existing[eid]
+            state = getv(qr, qh, "ESTADO").upper()
+            if state == "ENVIADO":
+                update_cell_by_header(pab_ws, pab_row_num, phlist, flag, "ENVIADO")
+                skipped += 1
+                continue
+            if state not in {"BORRADOR", "PENDIENTE"}:
+                print(f"OMITIDO {eid}: estado {state}")
+                skipped += 1
+                continue
         else:
-            continue
+            data = {
+                "ID_ENVIO": eid,
+                "ID_CAMPAÑA": campaign_id,
+                "REFERENCIA": rr,
+                "NOMBRE": nombre,
+                "EMAIL": email,
+                "PLANTILLA": pid,
+                "ASUNTO": subject,
+                "ESTADO": "BORRADOR",
+                "FECHA_PROG": now.strftime("%d/%m/%Y %H:%M"),
+                "FECHA_ENVIO": "",
+                "INTENTOS": 0,
+                "ERROR": "",
+                "ID_MENSAJE": "",
+                "CUERPO": body,
+                "ENCARGADO": getv(r, ph, "ENCARGADO") or "Camila",
+            }
+            queue_ws.append_row(row_by_headers(qhlist, data), value_input_option="USER_ENTERED")
+            row_num = len(queue_rows) + 1
+            queue_rows.append(row_by_headers(qhlist, data))
+            existing[eid] = (row_num, queue_rows[-1])
+
+        # Reserve before Gmail call
+        update_cell_by_header(queue_ws, row_num, qhlist, "ESTADO", "ENVIANDO")
+        try:
+            current_attempts = 0
+            if eid in existing:
+                try:
+                    current_attempts = int(float(getv(existing[eid][1], qh, "INTENTOS") or 0))
+                except Exception:
+                    current_attempts = 0
+            update_cell_by_header(queue_ws, row_num, qhlist, "INTENTOS", current_attempts + 1)
+
+            result = send_gmail(gmail, email, subject, body)
+            gmail_id = txt(result.get("id"))
+            update_cell_by_header(queue_ws, row_num, qhlist, "FECHA_ENVIO", datetime.now(TZ).strftime("%d/%m/%Y %H:%M:%S"))
+            update_cell_by_header(queue_ws, row_num, qhlist, "ID_MENSAJE", gmail_id)
+            update_cell_by_header(queue_ws, row_num, qhlist, "ERROR", "")
+            update_cell_by_header(queue_ws, row_num, qhlist, "ESTADO", "ENVIADO")
+            update_cell_by_header(pab_ws, pab_row_num, phlist, flag, "ENVIADO")
+            sent += 1
+            print(f"ENVIADO {pid} {rr} -> {email}")
+        except Exception as e:
+            update_cell_by_header(queue_ws, row_num, qhlist, "ERROR", str(e)[:500])
+            update_cell_by_header(queue_ws, row_num, qhlist, "ESTADO", "ERROR")
+            errors += 1
+            print(f"ERROR {pid} {rr}: {e}")
+
+    recalc_campaign(book, campaign_id)
+    print(json.dumps({
+        "fecha_bogota": today.isoformat(),
+        "enviados": sent,
+        "errores": errors,
+        "omitidos": skipped,
+    }, ensure_ascii=False))
 
-        resumen[
-            "candidatos"
-        ] += 1
-
-        # ====================================================
-        # DATOS DEL CLIENTE
-        # ====================================================
-
-        nombre = valor_fila(
-            fila,
-            hp,
-            "NOMBRE"
-        )
-
-        email = valor_fila(
-            fila,
-            hp,
-            "EMAIL"
-        )
-
-        mora = valor_fila(
-            fila,
-            hp,
-            "MORA"
-        )
-
-        cliente = clientes.get(
-            ref,
-            {}
-        )
-
-        respaldo = info_v2.get(
-            ref,
-            {}
-        )
-
-        if not nombre:
-
-            nombre = (
-                cliente.get(
-                    "nombre",
-                    ""
-                )
-                or
-                respaldo.get(
-                    "nombre",
-                    ""
-                )
-            )
-
-        if not email:
-
-            email = (
-                cliente.get(
-                    "email",
-                    ""
-                )
-                or
-                respaldo.get(
-                    "email",
-                    ""
-                )
-            )
-
-        if not mora:
-
-            mora = cliente.get(
-                "mora",
-                ""
-            )
-
-        # ====================================================
-        # ENCARGADO FIJO
-        # ====================================================
-
-        encargado = (
-            ENCARGADO_PAB
-        )
-
-        # ====================================================
-        # VALIDACIONES
-        # ====================================================
-
-        if not email:
-
-            resumen[
-                "sin_email"
-            ] += 1
-
-            continue
-
-        if es_mora_180(
-            mora
-        ):
-
-            resumen[
-                "mora_180"
-            ] += 1
-
-            continue
-
-        if ref in exclusiones:
-
-            resumen[
-                "excluir_correo"
-            ] += 1
-
-            continue
-
-        plantilla = plantillas.get(
-            plantilla_id
-        )
-
-        if not plantilla:
-
-            raise RuntimeError(
-                f"No encontré {plantilla_id} "
-                "en PLANTILLAS."
-            )
-
-        if (
-            plantilla[
-                "estado"
-            ]
-            != "ACTIVA"
-        ):
-
-            raise RuntimeError(
-                f"{plantilla_id} "
-                "no está ACTIVA."
-            )
-
-        # ====================================================
-        # VARIABLES DEL CORREO
-        # ====================================================
-
-        valor_pab = valor_fila(
-            fila,
-            hp,
-            "VALOR_PAB"
-        )
-
-        variables = {
-
-            "{{NOMBRE}}":
-                nombre,
-
-            "{{REFERENCIA}}":
-                ref,
-
-            "{{FECHA_PAB}}":
-                fecha.strftime(
-                    "%d/%m/%Y"
-                ),
-
-            "{{VALOR_PAB}}":
-                moneda(
-                    valor_pab
-                ),
-
-            "{{TIPO_AVISO}}":
-                tipo_aviso
-        }
-
-        asunto = reemplazar_variables(
-            plantilla[
-                "asunto"
-            ],
-            variables
-        )
-
-        cuerpo = reemplazar_variables(
-            plantilla[
-                "cuerpo"
-            ],
-            variables
-        )
-
-        if not cuerpo:
-
-            raise RuntimeError(
-                f"El cuerpo final de "
-                f"{plantilla_id} quedó vacío."
-            )
-
-        # ====================================================
-        # ID ÚNICO
-        # ====================================================
-
-        id_envio = (
-
-            f"ENV-PAB-"
-            f"{fecha.strftime('%Y%m%d')}-"
-            f"{ref}-"
-            f"{plantilla_id}"
-
-        )
-
-        if id_envio in ids_cola:
-
-            resumen[
-                "duplicados"
-            ] += 1
-
-            continue
-
-        # ====================================================
-        # CONSTRUIR FILA COLA_ENVIO
-        # ====================================================
-
-        nueva = [
-            ""
-        ] * len(
-            headers_cola
-        )
-
-        valores = {
-
-            "ID_ENVIO":
-                id_envio,
-
-            "ID_CAMPAÑA":
-                id_campana,
-
-            "REFERENCIA":
-                ref,
-
-            "NOMBRE":
-                nombre,
-
-            "EMAIL":
-                email,
-
-            "PLANTILLA":
-                plantilla_id,
-
-            "ASUNTO":
-                asunto,
-
-            # TODAVÍA NO ENVÍA
-            "ESTADO":
-                ESTADO_NUEVO,
-
-            "FECHA_PROG":
-                ahora.strftime(
-                    "%d/%m/%Y %H:%M"
-                ),
-
-            "FECHA_ENVIO":
-                "",
-
-            "INTENTOS":
-                0,
-
-            "ERROR":
-                "",
-
-            "ID_MENSAJE":
-                "",
-
-            "CUERPO":
-                cuerpo,
-
-            "ENCARGADO":
-                encargado
-        }
-
-        for columna, valor in valores.items():
-
-            if columna in hc:
-
-                nueva[
-                    hc[columna]
-                ] = valor
-
-        filas_nuevas.append(
-            nueva
-        )
-
-        ids_cola.add(
-            id_envio
-        )
-
-        resumen[
-            "agregados_borrador"
-        ] += 1
-
-        if (
-            len(
-                resumen[
-                    "ejemplos"
-                ]
-            )
-            < 10
-        ):
-
-            resumen[
-                "ejemplos"
-            ].append({
-
-                "referencia":
-                    ref,
-
-                "nombre":
-                    nombre,
-
-                "email":
-                    email,
-
-                "plantilla":
-                    plantilla_id,
-
-                "asunto":
-                    asunto,
-
-                "encargado":
-                    encargado,
-
-                "estado":
-                    ESTADO_NUEVO,
-
-                "id_envio":
-                    id_envio,
-
-                "cuerpo_encontrado":
-                    bool(cuerpo)
-            })
-
-    # ========================================================
-    # ESCRITURA
-    # ========================================================
-
-    if filas_nuevas:
-
-        asegurar_campana(
-            id_campana,
-            len(filas_nuevas)
-        )
-
-        hoja_cola.append_rows(
-            filas_nuevas,
-            value_input_option="USER_ENTERED"
-        )
-
-    print(
-        json.dumps(
-            resumen,
-            indent=2,
-            ensure_ascii=False
-        )
-    )
-
-    print(
-        "\nIMPORTANTE:"
-        "\nLos registros fueron creados como BORRADOR."
-        "\nTODOS los PaB quedan asignados a Camila."
-        "\nTodavía no se envían automáticamente."
-    )
-
-
-# ============================================================
-# EJECUCIÓN
-# ============================================================
 
 if __name__ == "__main__":
-
-    generar_recordatorios()
+    main()
