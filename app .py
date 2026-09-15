@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import unicodedata
 import re
+import secrets
 
 # ============================================================
 # CONFIGURACIÓN
@@ -68,7 +69,7 @@ def obtener_config_oauth():
         return None
     return {k: str(cfg[k]).strip() for k in requeridos}
 
-def crear_flujo_oauth(state=None):
+def crear_flujo_oauth(state=None, code_verifier=None):
     cfg = obtener_config_oauth()
     if not cfg:
         raise ValueError("Falta configurar [google_oauth] en Streamlit Secrets.")
@@ -83,7 +84,8 @@ def crear_flujo_oauth(state=None):
     }
     return Flow.from_client_config(
         client_config, scopes=GOOGLE_OAUTH_SCOPES,
-        redirect_uri=cfg["redirect_uri"], state=state
+        redirect_uri=cfg["redirect_uri"], state=state,
+        code_verifier=code_verifier, autogenerate_code_verifier=False
     )
 
 def credenciales_gmail_sesion():
@@ -109,7 +111,12 @@ def procesar_callback_oauth():
         st.error("El estado de OAuth no coincide. Intenta conectar nuevamente.")
         return
     try:
-        flujo = crear_flujo_oauth(state=state)
+        code_verifier = st.session_state.get("google_oauth_code_verifier")
+        if not code_verifier:
+            st.error("Se perdió el verificador de seguridad OAuth. Vuelve a Configuración y conecta Google nuevamente.")
+            st.query_params.clear()
+            return
+        flujo = crear_flujo_oauth(state=state, code_verifier=code_verifier)
         cfg = obtener_config_oauth()
         flujo.fetch_token(code=codigo)
         c = flujo.credentials
@@ -124,6 +131,8 @@ def procesar_callback_oauth():
         )
         if r.ok:
             st.session_state["google_oauth_email"] = r.json().get("email", "")
+        st.session_state.pop("google_oauth_code_verifier", None)
+        st.session_state.pop("google_oauth_state", None)
         st.query_params.clear()
         st.rerun()
     except Exception as e:
@@ -4837,13 +4846,15 @@ elif menu == "⚙️ Configuración":
     elif cred_gmail is None:
         st.warning("Gmail todavía no está conectado en esta sesión.")
         try:
-            flujo = crear_flujo_oauth()
+            code_verifier = secrets.token_urlsafe(64)
+            flujo = crear_flujo_oauth(code_verifier=code_verifier)
             url_auth, state = flujo.authorization_url(
                 access_type="offline",
                 include_granted_scopes="true",
                 prompt="consent"
             )
             st.session_state["google_oauth_state"] = state
+            st.session_state["google_oauth_code_verifier"] = code_verifier
             st.link_button("🔐 Conectar con Google", url_auth, type="primary")
             st.caption(f"Redirect configurado: {cfg_oauth['redirect_uri']}")
         except Exception as e:
@@ -4867,4 +4878,5 @@ elif menu == "⚙️ Configuración":
             st.session_state.pop("google_oauth_credentials", None)
             st.session_state.pop("google_oauth_email", None)
             st.session_state.pop("google_oauth_state", None)
+            st.session_state.pop("google_oauth_code_verifier", None)
             st.rerun()
