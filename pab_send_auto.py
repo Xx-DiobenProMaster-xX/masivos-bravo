@@ -204,6 +204,28 @@ def moneda(v):
     return "$" + f"{n:,.0f}".replace(",", ".")
 
 
+BRAVO_LOGO_URL = "https://drive.google.com/uc?export=view&id=13kK3v4FiyXFa4UzM_au3TllhOhwjvWb7"
+BRAVO_WHATSAPP = "573012411885"
+BRAVO_WHATSAPP_DISPLAY = "301 241 1885"
+
+def fecha_larga_es(v):
+    d=fecha(v)
+    if not d: return txt(v)
+    meses=["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"]
+    return f"{d.day} de {meses[d.month-1]} de {d.year}"
+
+def html_pab(nombre, referencia, fecha_pab, valor_pab, days, cuerpo_base=""):
+    import html as _html
+    nombre=_html.escape(txt(nombre) or "Cliente"); fecha_txt=_html.escape(fecha_larga_es(fecha_pab)); valor_txt=_html.escape(moneda(valor_pab))
+    if days == 0:
+        titulo1,titulo2,badge="Tu pago a banco","es hoy","Pago programado para hoy"
+        intro="Te recordamos que hoy tienes un pago a banco programado. Te compartimos los detalles de tu pago:"
+    else:
+        titulo1,titulo2,badge="Tu próximo pago","está cerca","Faltan 3 días"
+        intro="Queremos recordarte que tienes un pago a banco programado para los próximos días. Te compartimos los detalles de tu próximo pago:"
+    return f"""<!doctype html><html><body style='margin:0;padding:0;background:#f3f4f8;font-family:Arial,Helvetica,sans-serif;color:#26324f;'><table role='presentation' width='100%' cellspacing='0' cellpadding='0' style='padding:24px 8px;background:#f3f4f8;'><tr><td align='center'><table role='presentation' width='600' cellspacing='0' cellpadding='0' style='max-width:600px;width:100%;background:#fff;border-radius:12px;overflow:hidden;'><tr><td style='padding:26px 38px 12px;'><img src='{BRAVO_LOGO_URL}' width='190' alt='Bravo' style='display:block;max-width:190px;height:auto;'></td></tr><tr><td style='padding:10px 38px 0;'><div style='font-size:42px;line-height:1.02;font-weight:800;color:#241064;'>{titulo1}<br><span style='color:#16b9c5;'>{titulo2}</span></div></td></tr><tr><td style='padding:26px 38px 12px;font-size:18px;line-height:1.5;'>Hola, <b>{nombre}:</b></td></tr><tr><td style='padding:0 38px 20px;font-size:17px;line-height:1.5;'>{intro}</td></tr><tr><td style='padding:0 38px 18px;'><table role='presentation' width='100%' cellspacing='0' cellpadding='0' style='background:#f5f9ff;border:1px solid #dce8f4;border-radius:12px;'><tr><td style='padding:22px 28px;border-bottom:1px solid #dce8f4;'><div style='font-size:15px;'>Fecha de pago</div><div style='font-size:27px;font-weight:800;color:#111a43;margin:4px 0;'>{fecha_txt}</div><span style='display:inline-block;background:#c9f3ff;color:#087eaa;padding:6px 14px;border-radius:8px;font-weight:bold;'>{badge}</span></td></tr><tr><td style='padding:20px 28px;'><div style='font-size:15px;'>Valor del pago</div><div style='font-size:30px;font-weight:800;color:#111a43;margin-top:4px;'>{valor_txt}</div></td></tr></table></td></tr><tr><td style='padding:0 38px 18px;'><div style='background:#f3f8fd;border-radius:10px;padding:16px 18px;font-size:16px;line-height:1.4;'>Te recomendamos tener presente esta fecha para continuar con normalidad tu proceso.</div></td></tr><tr><td align='center' style='padding:2px 38px 24px;'><a href='https://wa.me/{BRAVO_WHATSAPP}' style='display:block;background:#18b9c5;color:#fff;text-decoration:none;font-size:18px;font-weight:bold;padding:16px;border-radius:28px;'>Consultar por WhatsApp</a></td></tr><tr><td style='padding:20px 38px;background:#f5f9fd;font-size:13px;'>🛡️ Continuamos con tu proceso &nbsp;&nbsp; 👥 Estamos aquí para apoyarte &nbsp;&nbsp; ✉️ Escríbenos si tienes dudas</td></tr><tr><td style='padding:20px 38px;border-bottom:5px solid #21bfd0;font-size:12px;color:#59657c;'><b style='color:#241064;font-size:14px;'>Bravo S.A.S.</b><br>Tu tranquilidad, nuestra prioridad.<br>WhatsApp: {BRAVO_WHATSAPP_DISPLAY} · Lunes a viernes, 8:00 a.m. - 6:00 p.m.</td></tr></table></td></tr></table></body></html>"""
+
+
 def gc():
     raw = os.environ.get("MI_JSON", "").strip()
     if not raw:
@@ -469,7 +491,8 @@ def main():
             "{{TIPO_AVISO}}": "Pago programado para hoy" if days == 0 else "Recordatorio 3 días antes",
         }
         subject = render(tpl["asunto"], values)
-        body = render(tpl["cuerpo"], values)
+        cuerpo_base = render(tpl["cuerpo"], values)
+        body = html_pab(nombre, rr, getv(r, ph, "FECHA_PAB"), getv(r, ph, "VALOR_PAB"), days, cuerpo_base)
         eid = f"ENV-PAB-{today.strftime('%Y%m%d')}-{rr}-{pid}"
 
         if eid in existing:
