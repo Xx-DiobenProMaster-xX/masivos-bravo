@@ -857,6 +857,40 @@ def moneda(valor):
         return "$0"
 
 
+def fecha_larga_pab(valor):
+    try:
+        d = pd.to_datetime(valor, dayfirst=True, errors="coerce")
+        if pd.isna(d):
+            return str(valor or "").strip()
+        meses = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
+        return f"{d.day} de {meses[d.month - 1]} de {d.year}"
+    except Exception:
+        return str(valor or "").strip()
+
+
+def html_pab_bravo(nombre, fecha_pab, valor_pab, dias):
+    import html as _html
+    nombre = _html.escape(str(nombre or "Cliente").strip() or "Cliente")
+    fecha_txt = _html.escape(fecha_larga_pab(fecha_pab))
+    valor_txt = _html.escape(moneda(numero(valor_pab)))
+    if int(dias) == 0:
+        titulo_1, titulo_2, badge = "Tu pago a banco", "es hoy", "Pago programado para hoy"
+        intro = "Te recordamos que hoy tienes un pago a banco programado. Te compartimos los detalles de tu pago:"
+    else:
+        titulo_1, titulo_2, badge = "Tu próximo pago", "está cerca", "Faltan 3 días"
+        intro = "Queremos recordarte que tienes un pago a banco programado para los próximos días. Te compartimos los detalles de tu próximo pago:"
+    return f'''<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f3f5f9;font-family:Arial,Helvetica,sans-serif;color:#27304f;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;background:#f3f5f9;"><tr><td align="center" style="padding:24px 10px;"><table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" style="width:600px;max-width:600px;background:#fff;border-radius:14px;overflow:hidden;">
+<tr><td style="padding:28px 38px 12px;"><img src="{BRAVO_LOGO_URL}" width="190" alt="Bravo" style="display:block;width:190px;max-width:55%;height:auto;border:0;"></td></tr>
+<tr><td style="padding:8px 38px 0;font-size:42px;line-height:43px;font-weight:800;color:#261269;">{titulo_1}<br><span style="color:#19b9c7;">{titulo_2}</span></td></tr>
+<tr><td style="padding:26px 38px 10px;font-size:18px;line-height:27px;">Hola, <b>{nombre}:</b></td></tr><tr><td style="padding:0 38px 22px;font-size:16px;line-height:25px;">{intro}</td></tr>
+<tr><td style="padding:0 38px 18px;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#f5f9ff;border:1px solid #dce7f3;border-radius:12px;"><tr><td width="74" align="center" style="padding:20px 0 20px 20px;border-bottom:1px solid #dce7f3;"><div style="width:50px;height:50px;line-height:50px;border-radius:50%;background:#d8f5fb;font-size:25px;">📅</div></td><td style="padding:20px 22px;border-bottom:1px solid #dce7f3;"><div style="font-size:14px;">Fecha de pago</div><div style="font-size:25px;line-height:32px;font-weight:800;color:#111a43;">{fecha_txt}</div><span style="display:inline-block;margin-top:5px;background:#c9f3ff;color:#087eaa;padding:5px 13px;border-radius:8px;font-size:13px;font-weight:700;">{badge}</span></td></tr><tr><td width="74" align="center" style="padding:20px 0 20px 20px;"><div style="width:50px;height:50px;line-height:50px;border-radius:50%;background:#d8f5fb;font-size:25px;">$</div></td><td style="padding:20px 22px;"><div style="font-size:14px;">Valor del pago</div><div style="font-size:29px;line-height:36px;font-weight:800;color:#111a43;">{valor_txt}</div></td></tr></table></td></tr>
+<tr><td style="padding:0 38px 18px;"><div style="background:#f1f7fc;border-radius:10px;padding:15px 17px;font-size:15px;line-height:22px;color:#59657c;">ⓘ &nbsp; Te recomendamos tener presente esta fecha para continuar con normalidad tu proceso.</div></td></tr>
+<tr><td align="center" style="padding:2px 38px 25px;"><a href="https://wa.me/{BRAVO_WHATSAPP}" style="display:block;background:#19b9c7;color:#fff;text-decoration:none;font-size:17px;font-weight:700;padding:15px 20px;border-radius:28px;">WhatsApp &nbsp; Consultar por WhatsApp</a></td></tr>
+<tr><td style="padding:18px 28px;background:#f4f8fc;"><table role="presentation" width="100%"><tr><td align="center" width="33%" style="font-size:11px;line-height:16px;color:#59657c;">◇<br>Continuamos<br>con tu proceso</td><td align="center" width="34%" style="font-size:11px;line-height:16px;color:#59657c;">♙<br>Estamos aquí<br>para apoyarte</td><td align="center" width="33%" style="font-size:11px;line-height:16px;color:#59657c;">✉<br>Escríbenos si<br>tienes dudas</td></tr></table></td></tr>
+<tr><td style="padding:18px 28px 20px;border-bottom:5px solid #20bfd0;font-size:11px;line-height:17px;color:#59657c;"><table role="presentation" width="100%"><tr><td><b style="color:#261269;font-size:13px;">Bravo S.A.S.</b><br>Tu tranquilidad, nuestra prioridad.</td><td align="right">WhatsApp: {BRAVO_WHATSAPP_DISPLAY}<br>Lunes a viernes, 8:00 a.m. - 6:00 p.m.</td></tr></table></td></tr></table></td></tr></table></body></html>'''
+
+
 def aviso_generado(valor):
 
     texto = normalizar(valor)
@@ -1010,13 +1044,11 @@ def preparar_vista_previa_pab(fila):
         tipo_aviso
     )
 
-    cuerpo = reemplazar_variables_pab(
-        plantilla.get(
-            "CUERPO",
-            ""
-        ),
-        fila,
-        tipo_aviso
+    cuerpo = html_pab_bravo(
+        nombre=fila.get("NOMBRE", ""),
+        fecha_pab=fila.get("FECHA_PAB", ""),
+        valor_pab=fila.get("VALOR_PAB", ""),
+        dias=dias,
     )
 
     return {
@@ -4394,7 +4426,8 @@ elif menu == "🏦 Pagos a Banco":
                     )
 
                     st.markdown(
-                        vista_previa["cuerpo"]
+                        vista_previa["cuerpo"],
+                        unsafe_allow_html=True
                     )
 
                     st.info(
