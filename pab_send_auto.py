@@ -215,7 +215,11 @@ def fecha_larga_es(v):
     return f"{d.day} de {meses[d.month-1]} de {d.year}"
 
 def html_pab(nombre, fecha_pab, valor_pab, dias):
-    """Correo visual exclusivo para PaB, compatible con Gmail/Outlook."""
+    """
+    HTML PaB estilo tarjeta visual Bravo.
+    Hecho con tablas + estilos inline para máxima compatibilidad con Gmail/Outlook.
+    No depende del CUERPO guardado en PLANTILLAS.
+    """
     import html as _html
 
     nombre = _html.escape(str(nombre or "Cliente").strip() or "Cliente")
@@ -227,95 +231,212 @@ def html_pab(nombre, fecha_pab, valor_pab, dias):
         titulo_2 = "es hoy"
         badge = "Pago programado para hoy"
         intro = (
-            "Te recordamos que hoy tienes un pago a banco programado. "
-            "Te compartimos los detalles de tu pago:"
+            "Te recordamos que hoy corresponde la fecha programada de tu pago a banco. "
+            "Aquí tienes los datos para que puedas tenerlos presentes."
         )
+        nota = "Una vez realices el pago, recuerda conservar el soporte correspondiente."
     else:
         titulo_1 = "Tu próximo pago"
         titulo_2 = "está cerca"
         badge = "Faltan 3 días"
         intro = (
             "Queremos recordarte que tienes un pago a banco programado para los próximos días. "
-            "Te compartimos los detalles de tu próximo pago:"
+            "Te compartimos los detalles de tu próximo pago."
         )
+        nota = "Te recomendamos tener presente esta fecha para continuar con normalidad tu proceso."
+
+    wa_url = f"https://wa.me/{BRAVO_WHATSAPP}"
+    mail_url = f"mailto:{GMAIL_FROM}"
 
     return f"""<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="x-apple-disable-message-reformatting">
 </head>
-<body style="margin:0;padding:0;background-color:#f3f5f9;font-family:Arial,Helvetica,sans-serif;color:#27304f;">
-<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;background-color:#f3f5f9;border-collapse:collapse;">
-<tr><td align="center" style="padding:28px 10px;">
-<table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" style="width:600px;max-width:600px;background-color:#ffffff;border-collapse:separate;border-spacing:0;border-radius:16px;overflow:hidden;">
-
-<tr><td align="center" style="padding:28px 36px 18px 36px;">
-<img src="{BRAVO_LOGO_URL}" width="175" alt="Bravo" style="display:block;width:175px;max-width:175px;height:auto;border:0;margin:0 auto;">
-</td></tr>
-
-<tr><td style="padding:4px 38px 0 38px;font-size:40px;line-height:43px;font-weight:800;letter-spacing:-0.8px;color:#261269;">
-{titulo_1}<br><span style="color:#19b9c7;">{titulo_2}</span>
-</td></tr>
-
-<tr><td style="padding:25px 38px 8px 38px;font-size:17px;line-height:26px;color:#27304f;">Hola, <strong>{nombre}:</strong></td></tr>
-<tr><td style="padding:0 38px 22px 38px;font-size:15px;line-height:24px;color:#46506a;">{intro}</td></tr>
-
-<tr><td style="padding:0 38px 18px 38px;">
-<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;background-color:#f5f9ff;border:1px solid #dce7f3;border-radius:12px;border-collapse:separate;">
+<body style="margin:0!important;padding:0!important;background:#f3f5f9;">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"
+       style="width:100%;margin:0;padding:0;background:#f3f5f9;border-collapse:collapse;">
 <tr>
-<td width="74" align="center" valign="middle" style="padding:20px 0 20px 18px;border-bottom:1px solid #dce7f3;">
-<table role="presentation" width="50" height="50" cellspacing="0" cellpadding="0" border="0" style="width:50px;height:50px;background-color:#d8f5fb;border-radius:25px;"><tr><td align="center" valign="middle" style="font-size:22px;font-weight:bold;color:#261269;">&#128197;</td></tr></table>
+<td align="center" style="padding:24px 10px;">
+
+<table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0"
+       style="width:100%;max-width:600px;background:#ffffff;border-collapse:collapse;border-radius:16px;overflow:hidden;">
+<tr>
+<td style="height:5px;line-height:5px;font-size:0;background:#3d2d8f;">&nbsp;</td>
+</tr>
+
+<!-- LOGO -->
+<tr>
+<td align="center" style="padding:26px 30px 20px 30px;">
+<img src="{BRAVO_LOGO_URL}" width="170" alt="Bravo"
+     style="display:block;width:170px;max-width:170px;height:auto;border:0;outline:none;text-decoration:none;margin:0 auto;">
 </td>
-<td valign="middle" style="padding:18px 22px;border-bottom:1px solid #dce7f3;">
+</tr>
+
+<!-- HERO -->
+<tr>
+<td style="padding:4px 38px 8px 38px;font-family:Arial,Helvetica,sans-serif;">
+<div style="font-size:40px;line-height:43px;font-weight:800;letter-spacing:-1px;color:#251263;">
+{titulo_1}<br>
+<span style="color:#18b8c8;">{titulo_2}</span>
+</div>
+</td>
+</tr>
+
+<!-- SALUDO / INTRO -->
+<tr>
+<td style="padding:20px 38px 8px 38px;font-family:Arial,Helvetica,sans-serif;font-size:17px;line-height:25px;color:#28334f;">
+Hola, <strong>{nombre}:</strong>
+</td>
+</tr>
+<tr>
+<td style="padding:0 38px 22px 38px;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:23px;color:#46516b;">
+{intro}
+</td>
+</tr>
+
+<!-- TARJETA DE DATOS -->
+<tr>
+<td style="padding:0 38px 18px 38px;">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"
+       style="width:100%;background:#f5f9ff;border:1px solid #dce8f4;border-collapse:separate;border-spacing:0;border-radius:12px;">
+
+<tr>
+<td width="78" align="center" valign="middle"
+    style="width:78px;padding:19px 0 19px 16px;border-bottom:1px solid #dce8f4;">
+<table role="presentation" width="52" cellspacing="0" cellpadding="0" border="0"
+       style="width:52px;background:#d8f6fb;border-collapse:separate;border-radius:26px;">
+<tr>
+<td height="52" align="center" valign="middle"
+    style="height:52px;font-family:Arial,Helvetica,sans-serif;font-size:24px;line-height:52px;color:#261269;">
+&#128197;
+</td>
+</tr>
+</table>
+</td>
+<td valign="middle" style="padding:17px 20px;border-bottom:1px solid #dce8f4;font-family:Arial,Helvetica,sans-serif;">
 <div style="font-size:13px;line-height:18px;color:#59657c;">Fecha de pago</div>
-<div style="font-size:23px;line-height:31px;font-weight:800;color:#111a43;">{fecha_txt}</div>
-<span style="display:inline-block;margin-top:5px;background-color:#c9f3ff;color:#087eaa;padding:5px 12px;border-radius:8px;font-size:12px;line-height:16px;font-weight:700;">{badge}</span>
-</td>
-</tr>
+<div style="font-size:22px;line-height:29px;font-weight:800;color:#111a43;">{fecha_txt}</div>
+<table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin-top:6px;border-collapse:separate;">
 <tr>
-<td width="74" align="center" valign="middle" style="padding:20px 0 20px 18px;">
-<table role="presentation" width="50" height="50" cellspacing="0" cellpadding="0" border="0" style="width:50px;height:50px;background-color:#d8f5fb;border-radius:25px;"><tr><td align="center" valign="middle" style="font-size:25px;font-weight:bold;color:#261269;">$</td></tr></table>
-</td>
-<td valign="middle" style="padding:18px 22px;">
-<div style="font-size:13px;line-height:18px;color:#59657c;">Valor del pago</div>
-<div style="font-size:28px;line-height:36px;font-weight:800;color:#111a43;">{valor_txt}</div>
+<td bgcolor="#c9f3ff" style="padding:5px 11px;border-radius:8px;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:15px;font-weight:700;color:#087eaa;">
+{badge}
 </td>
 </tr>
 </table>
-</td></tr>
+</td>
+</tr>
 
-<tr><td style="padding:0 38px 18px 38px;">
-<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;background-color:#f1f7fc;border-radius:10px;"><tr><td style="padding:14px 16px;font-size:14px;line-height:21px;color:#59657c;"><strong style="color:#19a9c0;">i</strong>&nbsp;&nbsp; Te recomendamos tener presente esta fecha para continuar con normalidad tu proceso.</td></tr></table>
-</td></tr>
+<tr>
+<td width="78" align="center" valign="middle" style="width:78px;padding:19px 0 19px 16px;">
+<table role="presentation" width="52" cellspacing="0" cellpadding="0" border="0"
+       style="width:52px;background:#d8f6fb;border-collapse:separate;border-radius:26px;">
+<tr>
+<td height="52" align="center" valign="middle"
+    style="height:52px;font-family:Arial,Helvetica,sans-serif;font-size:25px;line-height:52px;font-weight:800;color:#261269;">
+$
+</td>
+</tr>
+</table>
+</td>
+<td valign="middle" style="padding:17px 20px;font-family:Arial,Helvetica,sans-serif;">
+<div style="font-size:13px;line-height:18px;color:#59657c;">Valor del pago</div>
+<div style="font-size:28px;line-height:35px;font-weight:800;color:#111a43;">{valor_txt}</div>
+</td>
+</tr>
+</table>
+</td>
+</tr>
 
-<tr><td align="center" style="padding:0 38px 26px 38px;">
-<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;"><tr><td align="center" bgcolor="#19b9c7" style="border-radius:26px;">
-<a href="https://wa.me/{BRAVO_WHATSAPP}" style="display:block;padding:14px 20px;color:#ffffff;text-decoration:none;font-size:16px;line-height:20px;font-weight:700;">Consultar por WhatsApp</a>
-</td></tr></table>
-</td></tr>
+<!-- NOTA -->
+<tr>
+<td style="padding:0 38px 18px 38px;">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"
+       style="width:100%;background:#f0f7fc;border-collapse:separate;border-radius:10px;">
+<tr>
+<td width="48" align="center" valign="middle"
+    style="width:48px;padding:13px 0 13px 12px;font-family:Arial,Helvetica,sans-serif;">
+<table role="presentation" width="28" cellspacing="0" cellpadding="0" border="0"
+       style="width:28px;background:#28a9cf;border-collapse:separate;border-radius:14px;">
+<tr>
+<td height="28" align="center" valign="middle"
+    style="height:28px;color:#ffffff;font-size:16px;line-height:28px;font-weight:bold;">i</td>
+</tr>
+</table>
+</td>
+<td style="padding:13px 15px 13px 7px;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:20px;color:#59657c;">
+{nota}
+</td>
+</tr>
+</table>
+</td>
+</tr>
 
-<tr><td style="padding:18px 24px;background-color:#f4f8fc;">
-<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr>
-<td align="center" width="33%" style="font-size:11px;line-height:16px;color:#59657c;"><span style="font-size:18px;color:#3d2d8f;">&#9671;</span><br>Continuamos<br>con tu proceso</td>
-<td align="center" width="34%" style="font-size:11px;line-height:16px;color:#59657c;"><span style="font-size:18px;color:#3d2d8f;">&#9675;</span><br>Estamos aquí<br>para apoyarte</td>
-<td align="center" width="33%" style="font-size:11px;line-height:16px;color:#59657c;"><span style="font-size:18px;color:#3d2d8f;">&#9993;</span><br>Escríbenos si<br>tienes dudas</td>
-</tr></table>
-</td></tr>
+<!-- WHATSAPP -->
+<tr>
+<td align="center" style="padding:2px 38px 24px 38px;">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;border-collapse:separate;">
+<tr>
+<td align="center" bgcolor="#18b8c8" style="border-radius:28px;">
+<a href="{wa_url}"
+   style="display:block;padding:15px 18px;font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:20px;font-weight:700;color:#ffffff;text-decoration:none;">
+&#9742;&nbsp;&nbsp; Consultar por WhatsApp
+</a>
+</td>
+</tr>
+</table>
+</td>
+</tr>
 
-<tr><td style="padding:17px 28px 19px 28px;border-bottom:5px solid #20bfd0;font-size:11px;line-height:17px;color:#59657c;">
-<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr>
-<td valign="top"><strong style="color:#261269;font-size:13px;">Bravo S.A.S.</strong><br>Tu tranquilidad, nuestra prioridad.</td>
-<td align="right" valign="top">WhatsApp: {BRAVO_WHATSAPP_DISPLAY}<br>Lunes a viernes, 8:00 a.m. - 6:00 p.m.</td>
-</tr></table>
-</td></tr>
+<!-- 3 BENEFICIOS -->
+<tr>
+<td style="padding:18px 18px;background:#f3f8fc;">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;border-collapse:collapse;">
+<tr>
+<td width="33%" align="center" valign="top" style="padding:2px 5px;font-family:Arial,Helvetica,sans-serif;color:#59657c;">
+<div style="font-size:20px;line-height:24px;color:#3d2d8f;">&#9671;</div>
+<div style="font-size:11px;line-height:15px;">Continuamos<br>con tu proceso</div>
+</td>
+<td width="34%" align="center" valign="top" style="padding:2px 5px;font-family:Arial,Helvetica,sans-serif;color:#59657c;">
+<div style="font-size:20px;line-height:24px;color:#3d2d8f;">&#9675;</div>
+<div style="font-size:11px;line-height:15px;">Estamos aquí<br>para apoyarte</div>
+</td>
+<td width="33%" align="center" valign="top" style="padding:2px 5px;font-family:Arial,Helvetica,sans-serif;color:#59657c;">
+<div style="font-size:20px;line-height:24px;color:#3d2d8f;">&#9993;</div>
+<div style="font-size:11px;line-height:15px;">Escríbenos si<br>tienes dudas</div>
+</td>
+</tr>
+</table>
+</td>
+</tr>
+
+<!-- FOOTER -->
+<tr>
+<td style="padding:17px 26px 18px 26px;border-bottom:5px solid #20bfd0;font-family:Arial,Helvetica,sans-serif;">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;border-collapse:collapse;">
+<tr>
+<td valign="top" style="font-size:11px;line-height:16px;color:#59657c;">
+<strong style="font-size:13px;color:#261269;">Bravo S.A.S.</strong><br>
+Tu tranquilidad, nuestra prioridad.
+</td>
+<td align="right" valign="top" style="font-size:11px;line-height:16px;color:#59657c;">
+WhatsApp: <a href="{wa_url}" style="color:#3d2d8f;text-decoration:none;">{BRAVO_WHATSAPP_DISPLAY}</a><br>
+Lunes a viernes, 8:00 a.m. - 6:00 p.m.<br>
+<a href="{mail_url}" style="color:#3d2d8f;text-decoration:none;">Escríbenos por correo</a>
+</td>
+</tr>
+</table>
+</td>
+</tr>
 
 </table>
-</td></tr>
+</td>
+</tr>
 </table>
 </body>
 </html>"""
-
 
 def gc():
     raw = os.environ.get("MI_JSON", "").strip()
