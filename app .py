@@ -715,8 +715,20 @@ def cargar_hoja(nombre):
             columns=encabezados_finales
         )
 
+    # Google Sheets omite las celdas vacías al final de cada fila.
+    # Normalizamos todas las filas al mismo ancho que los encabezados.
+    ancho = len(encabezados_finales)
+    filas_normalizadas = []
+    for fila in valores[1:]:
+        fila = list(fila)
+        if len(fila) < ancho:
+            fila = fila + [""] * (ancho - len(fila))
+        elif len(fila) > ancho:
+            fila = fila[:ancho]
+        filas_normalizadas.append(fila)
+
     df = pd.DataFrame(
-        valores[1:],
+        filas_normalizadas,
         columns=encabezados_finales
     )
 
