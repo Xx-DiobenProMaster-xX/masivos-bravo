@@ -582,8 +582,7 @@ def main():
             "{{TIPO_AVISO}}": "Pago programado para hoy" if days == 0 else "Recordatorio 3 días antes",
         }
         subject = render(tpl["asunto"], values)
-        cuerpo_base = render(tpl["cuerpo"], values)
-        body = html_pab(nombre, rr, getv(r, ph, "FECHA_PAB"), getv(r, ph, "VALOR_PAB"), days, cuerpo_base)
+        body = html_pab(nombre, getv(r, ph, "FECHA_PAB"), getv(r, ph, "VALOR_PAB"), days)
         eid = f"ENV-PAB-{today.strftime('%Y%m%d')}-{rr}-{pid}"
 
         if eid in existing:
