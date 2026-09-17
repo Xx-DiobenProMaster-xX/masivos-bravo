@@ -2558,11 +2558,17 @@ def _fecha_desde_nombre_pestana(nombre):
     except Exception: return None
 
 def obtener_pestana_alianzas_mas_reciente():
+    # Temporalmente usamos la pestaña confirmada por operación.
+    # Más adelante podemos volver a detección automática cuando cambie la estructura.
+    nombre_objetivo = "17_09"
     libro = obtener_gc().open_by_key(ALIANZAS_SOURCE_SPREADSHEET_ID)
-    candidatas = [(f, ws.title) for ws in libro.worksheets() if (f := _fecha_desde_nombre_pestana(ws.title))]
-    if not candidatas:
-        raise ValueError("No encontré pestañas tipo DD_MM en Masivos_Descuento.")
-    return sorted(candidatas, reverse=True)[0][1]
+    disponibles = [str(ws.title).strip() for ws in libro.worksheets()]
+    if nombre_objetivo not in disponibles:
+        raise ValueError(
+            f"No encontré la pestaña {nombre_objetivo} en Masivos_Descuento. "
+            f"Pestañas disponibles: {', '.join(disponibles)}"
+        )
+    return nombre_objetivo
 
 def leer_fuente_alianzas():
     libro = obtener_gc().open_by_key(ALIANZAS_SOURCE_SPREADSHEET_ID)
@@ -3586,21 +3592,50 @@ def texto_tiempo_pendiente(fecha):
 respuestas["_TIEMPO_PENDIENTE"] = respuestas["_FECHA"].apply(texto_tiempo_pendiente)
 
 
+# Separación segura de respuestas:
+# una respuesta es de Alianzas si su ID_CAMPAÑA pertenece a una campaña
+# TIPO/FILTRO = ALIANZAS o PLANTILLA = TAL001.
+_ids_campanas_alianzas = set()
+
+if not campanas.empty and "ID_CAMPAÑA" in campanas.columns:
+    for _, _camp in campanas.iterrows():
+        _idc = str(_camp.get("ID_CAMPAÑA", "")).strip()
+        _tipo = normalizar(_camp.get("FILTRO", ""))
+        _plant = str(_camp.get("PLANTILLA", "")).strip().upper()
+        if _idc and (_tipo == "alianzas" or _plant == ALIANZAS_TEMPLATE_ID):
+            _ids_campanas_alianzas.add(_idc)
+
+if "ID_CAMPAÑA" in respuestas.columns:
+    respuestas["_ES_ALIANZAS"] = respuestas["ID_CAMPAÑA"].astype(str).str.strip().isin(
+        _ids_campanas_alianzas
+    )
+else:
+    respuestas["_ES_ALIANZAS"] = False
+
+respuestas_alianzas = respuestas[respuestas["_ES_ALIANZAS"]].copy()
+respuestas_regulares = respuestas[~respuestas["_ES_ALIANZAS"]].copy()
+
+
 total_respuestas = len(
-    respuestas
+    respuestas_regulares
 )
 
 total_atendidas = int(
-    respuestas["_ATENDIDA"].sum()
+    respuestas_regulares["_ATENDIDA"].sum()
 )
 
 total_pendientes = int(
-    (~respuestas["_ATENDIDA"]).sum()
+    (~respuestas_regulares["_ATENDIDA"]).sum()
 )
 
 pendientes_24 = int(
-    respuestas["_MAS_24H"].sum()
+    respuestas_regulares["_MAS_24H"].sum()
 )
+
+total_respuestas_alianzas = len(respuestas_alianzas)
+total_atendidas_alianzas = int(respuestas_alianzas["_ATENDIDA"].sum()) if not respuestas_alianzas.empty else 0
+total_pendientes_alianzas = int((~respuestas_alianzas["_ATENDIDA"]).sum()) if not respuestas_alianzas.empty else 0
+pendientes_24_alianzas = int(respuestas_alianzas["_MAS_24H"].sum()) if not respuestas_alianzas.empty else 0
 
 
 # ============================================================
@@ -4967,12 +5002,12 @@ elif menu == "💬 Respuestas":
 
         encargados_resp = []
 
-        if "ENCARGADO" in respuestas.columns:
+        if "ENCARGADO" in respuestas_regulares.columns:
 
             encargados_resp = sorted(
                 [
                     str(x).strip()
-                    for x in respuestas[
+                    for x in respuestas_regulares[
                         "ENCARGADO"
                     ].unique()
                     if str(x).strip()
@@ -4997,7 +5032,7 @@ elif menu == "💬 Respuestas":
             ]
         )
 
-    vista = respuestas.copy()
+    vista = respuestas_regulares.copy()
 
     if estado_filtro == "Pendientes":
 
@@ -5342,60 +5377,329 @@ elif menu == "💬 Respuestas":
 
 elif menu == "🤝 Alianzas":
     st.markdown('<div class="titulo">🤝 Alianzas</div>', unsafe_allow_html=True)
-    st.markdown('<div class="subtitulo">Clientes con ofertas especiales de descuento</div>', unsafe_allow_html=True)
-    st.info("Fuente: Masivos_Descuento. Se detecta automáticamente la pestaña más reciente con formato DD_MM.")
+    st.markdown(
+        '<div class="subtitulo">Clientes con ofertas especiales de descuento</div>',
+        unsafe_allow_html=True
+    )
 
-    if st.button("🔄 Sincronizar base de Alianzas", type="primary", use_container_width=True):
-        try:
-            cantidad,pestana=sincronizar_alianzas()
-            st.success(f"✅ {cantidad} referencias sincronizadas desde {pestana}.")
-            st.rerun()
-        except Exception as e:
-            st.error(f"❌ No pude sincronizar Alianzas: {e}")
+    tab_base_alianzas, tab_resp_alianzas = st.tabs([
+        "📨 Base y campañas",
+        "💬 Respuestas Alianzas",
+    ])
 
-    if alianzas.empty:
-        st.warning("La hoja ALIANZAS todavía está vacía. Sincronízala primero.")
-    else:
-        vista_a=alianzas.copy()
-        for c in ["REFERENCIA","NOMBRE","BANCO","EMAIL"]:
-            if c not in vista_a.columns: vista_a[c]=""
-        bancos=sorted({str(x).strip() for x in vista_a["BANCO"].tolist() if str(x).strip()})
-        con_email=int((vista_a["EMAIL"].astype(str).str.strip()!="").sum())
-        c1,c2,c3,c4=st.columns(4)
-        c1.metric("Referencias",len(vista_a)); c2.metric("Con correo",con_email)
-        c3.metric("Sin correo",len(vista_a)-con_email); c4.metric("Bancos",len(bancos))
-        st.divider()
-        bancos_sel=st.multiselect("Bancos a incluir",bancos,default=bancos)
-        previa=vista_a[vista_a["BANCO"].astype(str).isin(bancos_sel)].copy() if bancos_sel else vista_a.iloc[0:0].copy()
-        st.dataframe(previa[[c for c in ["REFERENCIA","NOMBRE","BANCO","EMAIL"] if c in previa.columns]].head(300),use_container_width=True,hide_index=True)
+    with tab_base_alianzas:
+        st.info(
+            "Fuente: Masivos_Descuento · pestaña actual: 17_09. "
+            "La sincronización carga Referencia, Cédula, Banco, Correo y Nombre Limpio."
+        )
 
-        with st.expander("👁️ Ver ejemplo TAL001", expanded=False):
-            if not previa.empty:
-                ej=previa.iloc[0]
-                asunto=reemplazar_variables_genericas(plantilla_alianzas_virtual().get("ASUNTO",""),ej)
-                st.caption(f"Asunto: {asunto}")
-                components.html(html_alianzas_bravo(ej.get("NOMBRE",""),ej.get("BANCO","")),height=980,scrolling=True)
+        if st.button(
+            "🔄 Sincronizar base de Alianzas",
+            type="primary",
+            use_container_width=True,
+            key="sync_alianzas"
+        ):
+            try:
+                cantidad, pestana = sincronizar_alianzas()
+                st.success(f"✅ {cantidad} referencias sincronizadas desde {pestana}.")
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ No pude sincronizar Alianzas: {e}")
 
-        with st.form("form_alianzas"):
-            nombre_c=st.text_input("Nombre de la campaña",value=f"Alianzas descuentos - {HOY.strftime('%d/%m/%Y')}")
-            x1,x2=st.columns(2)
-            with x1: fecha_c=st.date_input("Fecha programada",value=HOY,key="alianzas_fecha")
-            with x2: hora_c=st.time_input("Hora programada",value=AHORA.replace(second=0,microsecond=0).time(),key="alianzas_hora")
-            comentarios_c=st.text_area("Comentarios",height=80)
-            crear_c=st.form_submit_button("💾 Crear campaña ALIANZAS como BORRADOR",type="primary",use_container_width=True)
+        if alianzas.empty:
+            st.warning("La hoja ALIANZAS todavía está vacía. Sincronízala primero.")
+        else:
+            vista_a = alianzas.copy()
+            for c in ["REFERENCIA", "NOMBRE", "BANCO", "EMAIL"]:
+                if c not in vista_a.columns:
+                    vista_a[c] = ""
 
-        if crear_c:
-            if not bancos_sel:
-                st.error("Selecciona al menos un banco.")
-            else:
-                try:
-                    marca="[BANCOS_ALIANZAS:"+"|".join(bancos_sel)+"]"
-                    comentarios_final=(comentarios_c+"\n" if comentarios_c else "")+marca
-                    id_nueva=crear_campana_manual(nombre_c,"ALIANZAS",ALIANZAS_TEMPLATE_ID,fecha_c,hora_c,comentarios_final,"")
-                    st.success(f"✅ Campaña {id_nueva} creada. Ahora ve a 📧 Campañas para revisar, preparar y enviar.")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"❌ No pude crear la campaña: {e}")
+            bancos = sorted({
+                str(x).strip()
+                for x in vista_a["BANCO"].tolist()
+                if str(x).strip()
+            })
+            con_email = int((vista_a["EMAIL"].astype(str).str.strip() != "").sum())
+
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Referencias", len(vista_a))
+            c2.metric("Con correo", con_email)
+            c3.metric("Sin correo", len(vista_a) - con_email)
+            c4.metric("Bancos", len(bancos))
+
+            st.divider()
+
+            bancos_sel = st.multiselect(
+                "Bancos a incluir",
+                bancos,
+                default=bancos,
+                key="bancos_alianzas"
+            )
+
+            previa = (
+                vista_a[vista_a["BANCO"].astype(str).isin(bancos_sel)].copy()
+                if bancos_sel
+                else vista_a.iloc[0:0].copy()
+            )
+
+            st.dataframe(
+                previa[
+                    [c for c in ["REFERENCIA", "NOMBRE", "BANCO", "EMAIL"] if c in previa.columns]
+                ].head(300),
+                use_container_width=True,
+                hide_index=True
+            )
+
+            with st.expander("👁️ Ver ejemplo TAL001", expanded=False):
+                if not previa.empty:
+                    ej = previa.iloc[0]
+                    asunto = reemplazar_variables_genericas(
+                        plantilla_alianzas_virtual().get("ASUNTO", ""),
+                        ej
+                    )
+                    st.caption(f"Asunto: {asunto}")
+                    components.html(
+                        html_alianzas_bravo(
+                            ej.get("NOMBRE", ""),
+                            ej.get("BANCO", "")
+                        ),
+                        height=980,
+                        scrolling=True
+                    )
+                else:
+                    st.info("Selecciona al menos un banco para ver el ejemplo.")
+
+            with st.form("form_alianzas"):
+                nombre_c = st.text_input(
+                    "Nombre de la campaña",
+                    value=f"Alianzas descuentos - {HOY.strftime('%d/%m/%Y')}"
+                )
+                x1, x2 = st.columns(2)
+                with x1:
+                    fecha_c = st.date_input(
+                        "Fecha programada",
+                        value=HOY,
+                        key="alianzas_fecha"
+                    )
+                with x2:
+                    hora_c = st.time_input(
+                        "Hora programada",
+                        value=AHORA.replace(second=0, microsecond=0).time(),
+                        key="alianzas_hora"
+                    )
+
+                comentarios_c = st.text_area("Comentarios", height=80)
+                crear_c = st.form_submit_button(
+                    "💾 Crear campaña ALIANZAS como BORRADOR",
+                    type="primary",
+                    use_container_width=True
+                )
+
+            if crear_c:
+                if not bancos_sel:
+                    st.error("Selecciona al menos un banco.")
+                else:
+                    try:
+                        marca = "[BANCOS_ALIANZAS:" + "|".join(bancos_sel) + "]"
+                        comentarios_final = (
+                            (comentarios_c + "\n" if comentarios_c else "")
+                            + marca
+                        )
+                        id_nueva = crear_campana_manual(
+                            nombre_c,
+                            "ALIANZAS",
+                            ALIANZAS_TEMPLATE_ID,
+                            fecha_c,
+                            hora_c,
+                            comentarios_final,
+                            ""
+                        )
+                        st.success(
+                            f"✅ Campaña {id_nueva} creada. "
+                            "Ahora ve a 📧 Campañas para revisar, preparar y enviar."
+                        )
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ No pude crear la campaña: {e}")
+
+    with tab_resp_alianzas:
+        st.caption(
+            "Aquí aparecen únicamente respuestas cuyo ID_CAMPAÑA pertenece a "
+            "una campaña ALIANZAS / TAL001."
+        )
+
+        r1, r2, r3, r4 = st.columns(4)
+        r1.metric("💬 Total", total_respuestas_alianzas)
+        r2.metric("🟡 Pendientes", total_pendientes_alianzas)
+        r3.metric("🔴 +24h", pendientes_24_alianzas)
+        r4.metric("✅ Atendidas", total_atendidas_alianzas)
+
+        if respuestas_alianzas.empty:
+            st.info("Todavía no hay respuestas asociadas a campañas de Alianzas.")
+        else:
+            fa1, fa2, fa3 = st.columns([1.5, 1, 1])
+            with fa1:
+                buscar_a = st.text_input(
+                    "Buscar respuesta",
+                    placeholder="Nombre, referencia, correo o respuesta...",
+                    key="buscar_resp_alianzas"
+                )
+            with fa2:
+                encargados_a = sorted([
+                    str(x).strip()
+                    for x in respuestas_alianzas.get(
+                        "ENCARGADO", pd.Series(dtype=str)
+                    ).unique()
+                    if str(x).strip()
+                ])
+                encargado_a = st.selectbox(
+                    "Encargado",
+                    ["Todos"] + encargados_a,
+                    key="encargado_resp_alianzas"
+                )
+            with fa3:
+                estado_a = st.selectbox(
+                    "Estado",
+                    ["Pendientes", "Pendientes +24h", "Atendidas", "Todas"],
+                    key="estado_resp_alianzas"
+                )
+
+            vista_r = respuestas_alianzas.copy()
+
+            if estado_a == "Pendientes":
+                vista_r = vista_r[~vista_r["_ATENDIDA"]]
+            elif estado_a == "Pendientes +24h":
+                vista_r = vista_r[vista_r["_MAS_24H"]]
+            elif estado_a == "Atendidas":
+                vista_r = vista_r[vista_r["_ATENDIDA"]]
+
+            if encargado_a != "Todos" and "ENCARGADO" in vista_r.columns:
+                vista_r = vista_r[vista_r["ENCARGADO"] == encargado_a]
+
+            if buscar_a.strip():
+                q = buscar_a.lower().strip()
+                mask = pd.Series(False, index=vista_r.index)
+                for c in [
+                    "NOMBRE_CLIENTE", "REFERENCIA", "EMAIL_CLIENTE",
+                    "RESPUESTA", "ASUNTO"
+                ]:
+                    if c in vista_r.columns:
+                        mask |= (
+                            vista_r[c].astype(str).str.lower()
+                            .str.contains(q, regex=False, na=False)
+                        )
+                vista_r = vista_r[mask]
+
+            vista_r = vista_r.sort_values(
+                "_FECHA", ascending=False, na_position="last"
+            )
+
+            st.write(f"### 📥 {len(vista_r)} resultados")
+
+            for idx, fila in vista_r.head(50).iterrows():
+                id_respuesta = str(fila.get("ID_RESPUESTA", "")).strip()
+                nombre = str(fila.get("NOMBRE_CLIENTE", "Cliente")).strip()
+                referencia = str(fila.get("REFERENCIA", "")).strip()
+                encargado = str(fila.get("ENCARGADO", "")).strip()
+                asunto = str(fila.get("ASUNTO", "")).strip()
+                respuesta_cliente = str(fila.get("RESPUESTA", "")).strip()
+                comentario_actual = str(fila.get("COMENTARIOS", "")).strip()
+                atendida = bool(fila["_ATENDIDA"])
+                mas_24h = bool(fila["_MAS_24H"])
+
+                estado_txt = (
+                    "✅ Atendida"
+                    if atendida
+                    else ("🔴 Pendiente +24h" if mas_24h else "🟡 Pendiente")
+                )
+
+                titulo = f"{estado_txt} · {nombre}"
+                if referencia:
+                    titulo += f" · {referencia}"
+
+                with st.expander(titulo, expanded=False):
+                    a, b, c = st.columns(3)
+                    a.write("**Cliente**")
+                    a.write(nombre)
+                    b.write("**Referencia**")
+                    b.write(referencia or "—")
+                    c.write("**Encargado**")
+                    c.write(encargado or "—")
+
+                    d, e, f = st.columns(3)
+                    d.write("**Fecha respuesta**")
+                    d.write(str(fila.get("FECHA_RESPUESTA", "") or "—"))
+                    e.write("**Campaña**")
+                    e.write(str(fila.get("ID_CAMPAÑA", "") or "—"))
+                    f.write("**Tiempo pendiente**")
+                    f.write(
+                        "Gestionada"
+                        if atendida
+                        else str(fila.get("_TIEMPO_PENDIENTE", "Sin fecha"))
+                    )
+
+                    email_txt = str(fila.get("EMAIL_CLIENTE", "")).strip()
+                    if email_txt:
+                        st.caption(f"📧 {email_txt}")
+
+                    st.write("**Asunto**")
+                    st.write(asunto or "—")
+                    st.write("**Respuesta del cliente**")
+                    st.info(respuesta_cliente or "Sin texto")
+
+                    comentario_nuevo = st.text_area(
+                        "🗒️ Comentario interno",
+                        value=comentario_actual,
+                        height=100,
+                        key=f"comentario_alianzas_{id_respuesta}_{idx}"
+                    )
+
+                    if atendida:
+                        st.success("✅ Esta respuesta ya está gestionada.")
+                        if st.button(
+                            "💾 Guardar comentario",
+                            key=f"guardar_alianzas_{id_respuesta}_{idx}",
+                            use_container_width=True
+                        ):
+                            try:
+                                guardar_comentario(
+                                    id_respuesta,
+                                    comentario_nuevo
+                                )
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Error: {e}")
+                    else:
+                        g1, g2 = st.columns(2)
+                        with g1:
+                            if st.button(
+                                "💾 Guardar comentario",
+                                key=f"guardar_alianzas_{id_respuesta}_{idx}",
+                                use_container_width=True
+                            ):
+                                try:
+                                    guardar_comentario(
+                                        id_respuesta,
+                                        comentario_nuevo
+                                    )
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Error: {e}")
+                        with g2:
+                            if st.button(
+                                "✅ Marcar gestionada",
+                                key=f"gestionar_alianzas_{id_respuesta}_{idx}",
+                                use_container_width=True,
+                                type="primary"
+                            ):
+                                try:
+                                    marcar_respuesta_gestionada(
+                                        id_respuesta,
+                                        comentario_nuevo
+                                    )
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Error: {e}")
 
 
 elif menu == "📧 Campañas":
