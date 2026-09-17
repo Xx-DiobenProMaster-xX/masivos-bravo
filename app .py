@@ -144,6 +144,9 @@ HOJA_EXCLUIR_CORREO = "Excluir_correo"
 # Base maestra para completar nombre y correo de clientes
 CARTERA_BEREX_SPREADSHEET_ID = "13Vf32LzRI2V95dIUqfevzm-ZmsDR3d17UTre_7XJ-UU"
 HOJA_CARTERA_BEREX = "2. Cartera Berex"
+ALIANZAS_SOURCE_SPREADSHEET_ID = "1BO59uLIIPwkLcz3LmVEiM7_9IewAzabfBmztbcpYS_c"
+HOJA_ALIANZAS_DESTINO = "ALIANZAS"
+ALIANZAS_TEMPLATE_ID = "TAL001"
 
 # Segunda fuente de respaldo dentro del mismo archivo
 # El código probará estos nombres de pestaña por si el nombre visible difiere.
@@ -249,8 +252,11 @@ procesar_callback_oauth()
 # GMAIL / ENVÍO CONTROLADO
 # ============================================================
 
-GMAIL_FROM = "acuerdosRTD@resuelvetudeuda.com"
-GMAIL_REPLY_TO = "acuerdosRTD@resuelvetudeuda.com"
+GMAIL_FROM = "estructurados@gobravo.com.co"
+GMAIL_REPLY_TO = "estructurados@gobravo.com.co"
+ALIANZAS_RESPUESTAS_EMAIL = "alianzasco@gobravo.com.co"
+ALIANZAS_WHATSAPP = "576017438029"
+ALIANZAS_WHATSAPP_DISPLAY = "+57 601 743 8029"
 
 BRAVO_LOGO_URL = "https://drive.google.com/uc?export=view&id=13kK3v4FiyXFa4UzM_au3TllhOhwjvWb7"
 BRAVO_WHATSAPP = "573012411885"
@@ -1098,8 +1104,37 @@ def construir_html_campana(id_plantilla, fila, cuerpo_base=""):
             id_plantilla=idp,
         )
 
+    if idp == ALIANZAS_TEMPLATE_ID:
+        return html_alianzas_bravo(fila.get("NOMBRE", ""), fila.get("BANCO", ""))
+
     cuerpo = reemplazar_variables_genericas(cuerpo_base, fila)
     return _html_final_para_preview(cuerpo)
+
+
+# ============================================================
+# PLANTILLA VISUAL ALIANZAS
+# ============================================================
+def html_alianzas_bravo(nombre, nombre_banco):
+    import html as _html
+    nombre = _html.escape(str(nombre or "Cliente").strip() or "Cliente")
+    banco = _html.escape(str(nombre_banco or "tu entidad financiera").strip() or "tu entidad financiera")
+    plantilla = '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>\n<body style="margin:0;padding:0;background:#f4f5f9;font-family:Arial,Helvetica,sans-serif;color:#525b82;">\n<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;background:#f4f5f9;border-collapse:collapse;"><tr><td align="center" style="padding:18px 8px;">\n<table role="presentation" width="700" cellspacing="0" cellpadding="0" border="0" style="width:700px;max-width:700px;background:#fff;border-collapse:collapse;border-top:6px solid #38278f;">\n<tr><td style="padding:26px 48px 10px;"><table width="100%" role="presentation"><tr><td width="68%" align="center"><img src="{BRAVO_LOGO_URL}" width="170" alt="Bravo" style="display:block;width:170px;height:auto;border:0;margin:0 auto 6px;"><div style="font-size:12px;line-height:18px;color:#7a82a1;">Soluciones financieras para un mejor futuro</div></td><td width="32%" align="right" valign="top" style="font-size:12px;line-height:16px;color:#6f789a;font-weight:bold;padding-top:8px;">UNA OPORTUNIDAD<br>PARA TI</td></tr></table></td></tr>\n<tr><td style="padding:24px 48px 4px;"><table width="100%" role="presentation"><tr><td width="68%" style="font-size:38px;line-height:42px;font-weight:800;letter-spacing:-1px;color:#35238f;">¡Grandes noticias!<br><span style="color:#08b9bd;">Logramos una oferta especial</span></td><td width="32%" align="center"><table width="124" height="124" role="presentation" style="width:124px;height:124px;background:#f2f0ff;border-radius:62px;"><tr><td align="center" style="font-size:58px;">&#128640;</td></tr></table></td></tr></table></td></tr>\n<tr><td style="padding:12px 48px 10px;font-size:18px;line-height:27px;">Hola <strong style="color:#2d2088;">{nombre},</strong></td></tr>\n<tr><td style="padding:0 48px 22px;font-size:17px;line-height:27px;">Gracias a las gestiones con nuestros aliados estratégicos, hemos conseguido un <strong>descuento exclusivo para tu deuda con {banco}</strong>. Con este beneficio lograrás saldar tu deuda con un monto menor al previsto en tu plan de liquidación.</td></tr>\n<tr><td style="padding:0 48px 18px;"><table width="100%" role="presentation" style="background:#f5f3ff;border-radius:14px;"><tr><td width="82" align="center" style="padding:20px 0;font-size:34px;">&#127991;</td><td style="padding:18px 20px;border-left:1px solid #dcd9f0;"><div style="font-size:14px;color:#596184;">Entidad bancaria</div><div style="font-size:23px;line-height:29px;font-weight:800;color:#251780;">{banco}</div></td></tr></table></td></tr>\n<tr><td style="padding:0 48px 18px;"><table width="100%" role="presentation" style="background:#f0faf7;border:1px solid #cceee5;border-radius:14px;"><tr><td style="padding:18px 22px 10px;"><div style="font-size:13px;font-weight:800;letter-spacing:.5px;color:#08aaaf;text-transform:uppercase;">Beneficio Exclusivo</div><div style="font-size:20px;line-height:27px;font-weight:800;color:#35238f;margin-top:3px;">¿Por qué tomar esta oferta?</div></td></tr><tr><td style="padding:0 22px 16px;font-size:15px;line-height:22px;">\n<div style="padding:6px 0;"><strong style="color:#35238f;">• Máximo descuento posible:</strong> Un descuento superior al proyectado inicialmente.</div>\n<div style="padding:6px 0;"><strong style="color:#35238f;">• Recupera tu tranquilidad financiera:</strong> Vuelves a abrirte paso en el sistema financiero.</div>\n<div style="padding:6px 0;"><strong style="color:#35238f;">• Cierre definitivo:</strong> Aseguras una liquidación definitiva en condiciones favorables.</div></td></tr></table></td></tr>\n<tr><td style="padding:0 48px 22px;"><table width="100%" role="presentation" style="background:#e9fbfc;border-radius:14px;"><tr><td width="86" align="center" style="padding:18px 0;font-size:34px;">&#129309;</td><td style="padding:16px 20px;border-left:1px solid #c6e9ed;"><div style="font-size:24px;line-height:29px;font-weight:800;color:#08aaaf;">Contacta tu negociador</div><div style="font-size:16px;line-height:24px;">Estamos listos para acompañarte y diseñar la mejor opción de pago adaptada a tus necesidades.</div></td></tr></table></td></tr>\n<tr><td style="padding:0 48px 18px;font-size:16px;line-height:25px;">Queremos ayudarte a aprovechar esta oportunidad antes de que venza el plazo fijado por el aliado. Comunícate hoy mismo con nosotros.</td></tr>\n<tr><td style="padding:4px 48px 28px;"><table width="100%" role="presentation"><tr><td align="center" bgcolor="#08b9bd" style="border-radius:14px;"><a href="https://wa.me/{ALIANZAS_WHATSAPP}" style="display:block;padding:18px 22px;color:#fff;text-decoration:none;font-size:19px;line-height:23px;font-weight:800;">&#9742; &nbsp; Hablar con mi negociador &nbsp; &#8594;</a></td></tr></table></td></tr>\n<tr><td style="padding:18px 38px 28px;"><table width="100%" role="presentation"><tr><td width="33%" align="center" style="font-size:12px;line-height:17px;"><div style="font-size:28px;color:#35238f;">&#128161;</div><strong style="display:block;color:#2d2088;font-size:15px;margin:7px 0 4px;">Asesoría<br>personalizada</strong>Analizamos la mejor<br>opción para ti.</td><td width="34%" align="center" style="font-size:12px;line-height:17px;"><div style="font-size:28px;color:#35238f;">&#9671;</div><strong style="display:block;color:#2d2088;font-size:15px;margin:7px 0 4px;">Tu información<br>está segura</strong>Tratamos tus datos<br>con confidencialidad.</td><td width="33%" align="center" style="font-size:12px;line-height:17px;"><div style="font-size:28px;color:#35238f;">&#9675;</div><strong style="display:block;color:#2d2088;font-size:15px;margin:7px 0 4px;">Juntos es<br>posible</strong>Seguimos a tu lado<br>en este proceso.</td></tr></table></td></tr>\n<tr><td style="padding:20px 48px;border-top:1px solid #dfe2ed;"><table width="100%" role="presentation"><tr><td width="34%"><img src="{BRAVO_LOGO_URL}" width="115" alt="Bravo" style="display:block;width:115px;height:auto;border:0;"></td><td width="66%" style="padding-left:24px;border-left:1px solid #dfe2ed;font-size:12px;line-height:19px;"><strong style="font-size:14px;color:#2d2088;">Bravo S.A.S.</strong><br>&#9742; {ALIANZAS_WHATSAPP_DISPLAY}<br>Lunes a viernes, 8:00 a.m. - 6:00 p.m.</td></tr></table></td></tr>\n<tr><td height="18" style="height:18px;background:#f3f0ff;border-bottom:5px solid #10bcc6;">&nbsp;</td></tr>\n</table></td></tr></table></body></html>'
+    return plantilla.format(
+        BRAVO_LOGO_URL=BRAVO_LOGO_URL,
+        nombre=nombre,
+        banco=banco,
+        ALIANZAS_WHATSAPP=ALIANZAS_WHATSAPP,
+        ALIANZAS_WHATSAPP_DISPLAY=ALIANZAS_WHATSAPP_DISPLAY,
+    )
+
+def plantilla_alianzas_virtual():
+    return pd.Series({
+        "ID_PLANTILLA": ALIANZAS_TEMPLATE_ID,
+        "NOMBRE": "Oferta especial Alianzas",
+        "ASUNTO": "¡Tenemos una oferta especial para tu deuda con {{BANCO}}! | Bravo",
+        "CUERPO": "",
+        "ESTADO": "ACTIVA",
+    })
 
 
 # ============================================================
@@ -2511,6 +2546,79 @@ def enviar_pab_hoy_ahora(credenciales):
 
 
 # ============================================================
+# ALIANZAS / SINCRONIZACIÓN
+# ============================================================
+def _fecha_desde_nombre_pestana(nombre):
+    m = re.fullmatch(r"(\d{1,2})[_\-/](\d{1,2})(?:[_\-/](\d{2,4}))?", str(nombre or "").strip())
+    if not m: return None
+    dia, mes = int(m.group(1)), int(m.group(2))
+    anio = int(m.group(3)) if m.group(3) else HOY.year
+    if anio < 100: anio += 2000
+    try: return date(anio, mes, dia)
+    except Exception: return None
+
+def obtener_pestana_alianzas_mas_reciente():
+    libro = obtener_gc().open_by_key(ALIANZAS_SOURCE_SPREADSHEET_ID)
+    candidatas = [(f, ws.title) for ws in libro.worksheets() if (f := _fecha_desde_nombre_pestana(ws.title))]
+    if not candidatas:
+        raise ValueError("No encontré pestañas tipo DD_MM en Masivos_Descuento.")
+    return sorted(candidatas, reverse=True)[0][1]
+
+def leer_fuente_alianzas():
+    libro = obtener_gc().open_by_key(ALIANZAS_SOURCE_SPREADSHEET_ID)
+    pestana = obtener_pestana_alianzas_mas_reciente()
+    valores = libro.worksheet(pestana).get_all_values()
+    if len(valores) < 2: return pd.DataFrame(), pestana
+    headers = [str(x).strip() for x in valores[0]]
+    ancho = len(headers)
+    df = pd.DataFrame([(f + [""]*ancho)[:ancho] for f in valores[1:]], columns=headers)
+    mapa = {normalizar(c).replace(" ","_"): c for c in df.columns}
+    def col(*ops):
+        for op in ops:
+            k=normalizar(op).replace(" ","_")
+            if k in mapa: return mapa[k]
+        return None
+    c_ref,c_ced,c_banco,c_email=col("Referencia"),col("Cedula","Cédula"),col("Banco"),col("Correo","Email")
+    c_nl,c_n=col("Nombre Limpio"),col("Nombre")
+    if not c_ref or not c_banco or not c_email:
+        raise ValueError("La fuente debe tener Referencia, Banco y Correo.")
+    out=pd.DataFrame({
+        "REFERENCIA":df[c_ref],"CEDULA":df[c_ced] if c_ced else "",
+        "BANCO":df[c_banco],"EMAIL":df[c_email],
+        "NOMBRE":df[c_nl] if c_nl else (df[c_n] if c_n else "")
+    })
+    out["REFERENCIA"]=out["REFERENCIA"].apply(normalizar_referencia)
+    for c in ["CEDULA","BANCO","EMAIL","NOMBRE"]: out[c]=out[c].astype(str).str.strip()
+    out=out[out["REFERENCIA"]!=""].drop_duplicates("REFERENCIA",keep="first").copy()
+    out["ENCARGADO"]="Alianzas"
+    out["FUENTE_PESTANA"]=pestana
+    out["FECHA_ACTUALIZACION"]=datetime.now(TZ).strftime("%d/%m/%Y %H:%M:%S")
+    return out,pestana
+
+def asegurar_hoja_alianzas():
+    archivo=obtener_archivo()
+    try: return archivo.worksheet(HOJA_ALIANZAS_DESTINO)
+    except Exception:
+        ws=archivo.add_worksheet(title=HOJA_ALIANZAS_DESTINO,rows=2500,cols=8)
+        ws.append_row(["REFERENCIA","CEDULA","BANCO","EMAIL","NOMBRE","ENCARGADO","FUENTE_PESTANA","FECHA_ACTUALIZACION"])
+        return ws
+
+def sincronizar_alianzas():
+    df,pestana=leer_fuente_alianzas()
+    ws=asegurar_hoja_alianzas()
+    headers=["REFERENCIA","CEDULA","BANCO","EMAIL","NOMBRE","ENCARGADO","FUENTE_PESTANA","FECHA_ACTUALIZACION"]
+    vals=[headers]+df[headers].fillna("").astype(str).values.tolist()
+    ws.clear()
+    ws.update(range_name=f"A1:H{len(vals)}", values=vals)
+    st.cache_data.clear()
+    return len(df),pestana
+
+def cargar_alianzas_local():
+    try: return cargar_hoja(HOJA_ALIANZAS_DESTINO)
+    except Exception: return pd.DataFrame(columns=["REFERENCIA","CEDULA","BANCO","EMAIL","NOMBRE","ENCARGADO","FUENTE_PESTANA","FECHA_ACTUALIZACION"])
+
+
+# ============================================================
 # CAMPAÑAS MANUALES / PREPARACIÓN SEGURA
 # ============================================================
 
@@ -2528,6 +2636,7 @@ TIPOS_CAMPANA_MANUAL = [
     "MORA_60",
     "MORA_90",
     "PERSONALIZADA",
+    "ALIANZAS",
 ]
 
 
@@ -2551,6 +2660,8 @@ def obtener_ids_plantillas_activas():
 
 
 def obtener_plantilla_generica(id_plantilla):
+    if str(id_plantilla or "").strip().upper() == ALIANZAS_TEMPLATE_ID:
+        return plantilla_alianzas_virtual()
     if plantillas.empty or "ID_PLANTILLA" not in plantillas.columns:
         return None
 
@@ -2581,6 +2692,8 @@ def reemplazar_variables_genericas(texto, fila):
         "{{MORA}}": str(fila.get("MORA", "")).strip(),
         "{{ENCARGADO}}": str(fila.get("ENCARGADO", "")).strip(),
         "{{SALDO}}": moneda(numero(fila.get("SALDO", 0))),
+        "{{BANCO}}": str(fila.get("BANCO", "")).strip(),
+        "{{CEDULA}}": str(fila.get("CEDULA", "")).strip(),
     }
     for variable, valor in reemplazos.items():
         texto = texto.replace(variable, str(valor))
@@ -2714,9 +2827,12 @@ def preparar_clientes_campana(fila_campana):
     tipo = str(fila_campana.get("FILTRO", "")).strip().upper()
     id_plantilla = str(fila_campana.get("PLANTILLA", "")).strip()
 
-    # PRUEBA usa EXCLUSIVAMENTE la hoja PRUEBAS. El resto usa CLIENTES.
-    # Así una prueba real nunca puede salir accidentalmente a la cartera.
-    base = pruebas.copy() if tipo == "PRUEBA" else clientes.copy()
+    if tipo == "PRUEBA":
+        base = pruebas.copy()
+    elif tipo == "ALIANZAS":
+        base = alianzas.copy()
+    else:
+        base = clientes.copy()
 
     # CLIENTES/PRUEBAS conservan los encabezados tal como están escritos en Sheets
     # (por ejemplo: Referencia, Nombre, Email, Mora). Pandas distingue
@@ -2734,6 +2850,8 @@ def preparar_clientes_campana(fila_campana):
         "SALDO": {"SALDO", "SALDO_CLIENTE"},
         "MORA": {"MORA", "MORA_STATUS", "STATUS_MORA", "ESTADO_MORA"},
         "ENCARGADO": {"ENCARGADO", "PERSONA", "NEGOCIADOR", "RESPONSABLE"},
+        "BANCO": {"BANCO", "ENTIDAD", "NOMBRE_BANCO"},
+        "CEDULA": {"CEDULA", "DOCUMENTO", "IDENTIFICACION"},
     }
     columnas_por_clave = {_clave_columna(c): c for c in base.columns}
     for canonica, posibles in aliases.items():
@@ -2770,9 +2888,15 @@ def preparar_clientes_campana(fila_campana):
         base = base[base["_REF"].isin(refs_solicitadas)].copy()
 
     elif tipo == "PRUEBA":
-        # Todos los registros válidos de PRUEBAS entran en la vista previa.
-        # No se consulta CLIENTES para este tipo.
         pass
+
+    elif tipo == "ALIANZAS":
+        comentarios_guardados = str(fila_campana.get("COMENTARIOS", "") or "")
+        m_bancos = re.search(r"\[BANCOS_ALIANZAS:([^\]]*)\]", comentarios_guardados)
+        if m_bancos:
+            bancos = {normalizar(x) for x in m_bancos.group(1).split("|") if str(x).strip()}
+            if bancos:
+                base = base[base["BANCO"].apply(lambda x: normalizar(x) in bancos)].copy()
 
     elif tipo in MAPA_PLANTILLAS_MORA:
         objetivo = normalizar(tipo).replace("_", " ")
@@ -2792,15 +2916,15 @@ def preparar_clientes_campana(fila_campana):
     base = base.drop_duplicates(subset=["_REF"], keep="first").copy()
 
     if tipo == "PRUEBA":
-        # PRUEBAS es una lista controlada de destinatarios internos/de prueba.
-        # No aplicamos Mora 180 ni Excluir_correo a datos sintéticos TESTxxx.
         n_mora_180 = 0
         n_excl = 0
     else:
-        mask_180 = base["MORA"].apply(es_mora_180)
-        n_mora_180 = entero_seguro(mask_180.sum())
-        base = base[~mask_180].copy()
-
+        if tipo == "ALIANZAS":
+            n_mora_180 = 0
+        else:
+            mask_180 = base["MORA"].apply(es_mora_180)
+            n_mora_180 = entero_seguro(mask_180.sum())
+            base = base[~mask_180].copy()
         excluidas = referencias_excluidas_normalizadas()
         mask_excl = base["_REF"].isin(excluidas)
         n_excl = entero_seguro(mask_excl.sum())
@@ -3374,6 +3498,8 @@ try:
         "PLANTILLAS"
     )
 
+    alianzas = cargar_alianzas_local()
+
 except Exception as e:
 
     st.error(
@@ -3627,6 +3753,7 @@ with st.sidebar:
         [
             "🏠 Inicio",
             "📧 Campañas",
+            "🤝 Alianzas",
             "🏦 Pagos a Banco",
             "💬 Respuestas",
             "⚠️ Pendientes",
@@ -5212,6 +5339,65 @@ elif menu == "💬 Respuestas":
 # CAMPAÑAS
 # ============================================================
 
+
+elif menu == "🤝 Alianzas":
+    st.markdown('<div class="titulo">🤝 Alianzas</div>', unsafe_allow_html=True)
+    st.markdown('<div class="subtitulo">Clientes con ofertas especiales de descuento</div>', unsafe_allow_html=True)
+    st.info("Fuente: Masivos_Descuento. Se detecta automáticamente la pestaña más reciente con formato DD_MM.")
+
+    if st.button("🔄 Sincronizar base de Alianzas", type="primary", use_container_width=True):
+        try:
+            cantidad,pestana=sincronizar_alianzas()
+            st.success(f"✅ {cantidad} referencias sincronizadas desde {pestana}.")
+            st.rerun()
+        except Exception as e:
+            st.error(f"❌ No pude sincronizar Alianzas: {e}")
+
+    if alianzas.empty:
+        st.warning("La hoja ALIANZAS todavía está vacía. Sincronízala primero.")
+    else:
+        vista_a=alianzas.copy()
+        for c in ["REFERENCIA","NOMBRE","BANCO","EMAIL"]:
+            if c not in vista_a.columns: vista_a[c]=""
+        bancos=sorted({str(x).strip() for x in vista_a["BANCO"].tolist() if str(x).strip()})
+        con_email=int((vista_a["EMAIL"].astype(str).str.strip()!="").sum())
+        c1,c2,c3,c4=st.columns(4)
+        c1.metric("Referencias",len(vista_a)); c2.metric("Con correo",con_email)
+        c3.metric("Sin correo",len(vista_a)-con_email); c4.metric("Bancos",len(bancos))
+        st.divider()
+        bancos_sel=st.multiselect("Bancos a incluir",bancos,default=bancos)
+        previa=vista_a[vista_a["BANCO"].astype(str).isin(bancos_sel)].copy() if bancos_sel else vista_a.iloc[0:0].copy()
+        st.dataframe(previa[[c for c in ["REFERENCIA","NOMBRE","BANCO","EMAIL"] if c in previa.columns]].head(300),use_container_width=True,hide_index=True)
+
+        with st.expander("👁️ Ver ejemplo TAL001", expanded=False):
+            if not previa.empty:
+                ej=previa.iloc[0]
+                asunto=reemplazar_variables_genericas(plantilla_alianzas_virtual().get("ASUNTO",""),ej)
+                st.caption(f"Asunto: {asunto}")
+                components.html(html_alianzas_bravo(ej.get("NOMBRE",""),ej.get("BANCO","")),height=980,scrolling=True)
+
+        with st.form("form_alianzas"):
+            nombre_c=st.text_input("Nombre de la campaña",value=f"Alianzas descuentos - {HOY.strftime('%d/%m/%Y')}")
+            x1,x2=st.columns(2)
+            with x1: fecha_c=st.date_input("Fecha programada",value=HOY,key="alianzas_fecha")
+            with x2: hora_c=st.time_input("Hora programada",value=AHORA.replace(second=0,microsecond=0).time(),key="alianzas_hora")
+            comentarios_c=st.text_area("Comentarios",height=80)
+            crear_c=st.form_submit_button("💾 Crear campaña ALIANZAS como BORRADOR",type="primary",use_container_width=True)
+
+        if crear_c:
+            if not bancos_sel:
+                st.error("Selecciona al menos un banco.")
+            else:
+                try:
+                    marca="[BANCOS_ALIANZAS:"+"|".join(bancos_sel)+"]"
+                    comentarios_final=(comentarios_c+"\n" if comentarios_c else "")+marca
+                    id_nueva=crear_campana_manual(nombre_c,"ALIANZAS",ALIANZAS_TEMPLATE_ID,fecha_c,hora_c,comentarios_final,"")
+                    st.success(f"✅ Campaña {id_nueva} creada. Ahora ve a 📧 Campañas para revisar, preparar y enviar.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ No pude crear la campaña: {e}")
+
+
 elif menu == "📧 Campañas":
 
     st.markdown(
@@ -5972,6 +6158,7 @@ elif menu == "📝 Plantillas":
         st.info("No hay plantillas disponibles para previsualizar.")
     else:
         ids_plantilla = [str(x).strip() for x in plantillas["ID_PLANTILLA"].tolist() if str(x).strip()]
+        ids_plantilla.append(ALIANZAS_TEMPLATE_ID)
         ids_plantilla = list(dict.fromkeys(ids_plantilla))
         st.divider()
         st.subheader("👁️ Vista previa de plantilla")
@@ -5979,7 +6166,12 @@ elif menu == "📝 Plantillas":
         fila_preview = obtener_plantilla_generica(id_preview)
         if fila_preview is not None:
             id_upper = str(id_preview).strip().upper()
-            if id_upper in {"PAB000", "PAB003"}:
+            if id_upper == ALIANZAS_TEMPLATE_ID:
+                fila_preview = plantilla_alianzas_virtual()
+                ejemplo={"NOMBRE":"Cliente de ejemplo","REFERENCIA":"PRUEBA-001","EMAIL":"cliente@ejemplo.com","BANCO":"Banco de ejemplo","ENCARGADO":"Alianzas"}
+                asunto_preview=reemplazar_variables_genericas(fila_preview.get("ASUNTO",""),ejemplo)
+                html_preview=html_alianzas_bravo(ejemplo["NOMBRE"],ejemplo["BANCO"])
+            elif id_upper in {"PAB000", "PAB003"}:
                 dias_preview = 0 if id_upper == "PAB000" else 3
                 datos_demo = {"NOMBRE":"Dioben Jesus Araujo Hernandez","REFERENCIA":"PRUEBA-001","FECHA_PAB":"18/09/2026","VALOR_PAB":1000000}
                 asunto_preview = reemplazar_variables_pab(fila_preview.get("ASUNTO", ""), datos_demo, "Pago programado para hoy" if dias_preview == 0 else "Recordatorio 3 días antes")
@@ -6038,6 +6230,13 @@ elif menu == "🕘 Historial":
 # ============================================================
 
 elif menu == "⚙️ Configuración":
+
+    st.info(
+        "Remitente configurado: estructurados@gobravo.com.co. "
+        "WhatsApp exclusivo de Alianzas: +57 601 743 8029. "
+        "Las respuestas deben seguir entrando al buzón de Estructurados para conservar la asignación por ENCARGADO. "
+        "Las respuestas de campañas Alianzas deben copiarse a alianzasco@gobravo.com.co desde el recolector de respuestas."
+    )
 
     st.title(
         "⚙️ Configuración"
