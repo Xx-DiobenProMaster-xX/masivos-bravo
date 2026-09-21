@@ -140,6 +140,10 @@ SPREADSHEET_ID = "1VGdEUGRDFxBjKRLF1KF7EcHIBf3f8ujtN3iPm6TatjI"
 # Fuente donde vive Excluir_correo
 EXCLUSIONES_SPREADSHEET_ID = "15sbBsZcMj8PMkHXByLqjcuqtvsY_2FGYiwhkKPmfIYM"
 HOJA_EXCLUIR_CORREO = "Excluir_correo"
+HOJA_UNIDOS_EST = "Unidos_Est"
+MORA_SPREADSHEET_ID = "1jcPPhtF2YK3Kr7P_A0Mgh2OqhOfnVWB2to3UPoSH5tE"
+HOJA_MORA_COMISION = "Comisión"
+MAX_DIAS_MORA_ENVIO = 365
 
 # Base maestra para completar nombre y correo de clientes
 CARTERA_BEREX_SPREADSHEET_ID = "13Vf32LzRI2V95dIUqfevzm-ZmsDR3d17UTre_7XJ-UU"
@@ -1018,7 +1022,13 @@ def html_mora_bravo(nombre, mora, id_plantilla="T001"):
     }
 
     cfg = configuracion.get(idp, configuracion["T001"])
-    mora_txt = _html.escape(str(mora or "Pago pendiente").strip() or "Pago pendiente")
+    etiquetas_dias = {
+        "T001": "1 día en mora",
+        "T030": "30 días en mora",
+        "T060": "60 días en mora",
+        "T090": "90 días en mora",
+    }
+    mora_txt = _html.escape(etiquetas_dias.get(idp, str(mora or "Pago pendiente").strip() or "Pago pendiente"))
 
     repercusiones_html = "".join(
         f"""<tr>
@@ -1729,820 +1739,49 @@ def obtener_referencias_excluidas():
         )
 
 
+def _numero_dias_mora(valor):
+    texto = str(valor or "").strip().replace(",", ".")
+    if not texto:
+        return None
+    m = re.search(r"-?\d+(?:\.\d+)?", texto)
+    if not m:
+        return None
+    try:
+        return int(float(m.group(0)))
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def mapa_dias_mora_actual():
+    """Comisión: A=referencia, M=días mora. Si se repite, conserva el mayor."""
+    hoja = obtener_hoja_externa(MORA_SPREADSHEET_ID, HOJA_MORA_COMISION)
+    valores = hoja.get("A:M")
+    mapa = {}
+    for fila in valores[1:]:
+        ref = normalizar_referencia(fila[0] if len(fila) > 0 else "")
+        dias = _numero_dias_mora(fila[12] if len(fila) > 12 else "")
+        if not ref or dias is None:
+            continue
+        mapa[ref] = max(mapa.get(ref, dias), dias)
+    return mapa
+
+
+def dias_mora_referencia(referencia):
+    ref = normalizar_referencia(referencia)
+    return mapa_dias_mora_actual().get(ref)
+
+
+def referencia_habilitada_por_mora(referencia):
+    dias = dias_mora_referencia(referencia)
+    # Para envíos reales exigimos conocer el dato y que sea menor de 366.
+    return dias is not None and dias < 366
+
+
 def es_mora_180(valor):
-
-    texto = normalizar(
-        valor
-    ).replace(
-        "_",
-        " "
-    )
-
-    texto = re.sub(
-        r"\s+",
-        " ",
-        texto
-    ).strip()
-
-    return texto in {
-        "MORA 180",
-        "180"
-    }
-
-
-def obtener_encabezados_hoja(hoja):
-
-    encabezados = hoja.row_values(1)
-
-    return [
-        str(x).strip()
-        for x in encabezados
-    ]
-
-
-def construir_fila_por_encabezados(
-    encabezados,
-    datos
-):
-
-    return [
-        datos.get(
-            encabezado,
-            ""
-        )
-        for encabezado in encabezados
-    ]
-
-
-def existe_envio_pab_en_cola(
-    referencia,
-    id_plantilla,
-    fecha_pab
-):
-
-    archivo = obtener_archivo()
-
-    hoja = archivo.worksheet(
-        "COLA_ENVIO"
-    )
-
-    valores = hoja.get_all_values()
-
-    if len(valores) <= 1:
-        return False
-
-    encabezados = [
-        str(x).strip()
-        for x in valores[0]
-    ]
-
-    try:
-        i_ref = encabezados.index(
-            "REFERENCIA"
-        )
-        i_plantilla = encabezados.index(
-            "PLANTILLA"
-        )
-        i_estado = encabezados.index(
-            "ESTADO"
-        )
-
-    except ValueError:
-        return False
-
-    referencia = str(
-        referencia
-    ).strip()
-
-    id_plantilla = str(
-        id_plantilla
-    ).strip().upper()
-
-    for fila in valores[1:]:
-
-        ref = (
-            str(fila[i_ref]).strip()
-            if len(fila) > i_ref
-            else ""
-        )
-
-        plantilla = (
-            str(fila[i_plantilla]).strip().upper()
-            if len(fila) > i_plantilla
-            else ""
-        )
-
-        estado = (
-            str(fila[i_estado]).strip().upper()
-            if len(fila) > i_estado
-            else ""
-        )
-
-        if (
-            ref == referencia
-            and
-            plantilla == id_plantilla
-            and
-            estado not in {
-                "ERROR",
-                "CANCELADO",
-                "BLOQUEADO"
-            }
-        ):
-            return True
-
-    return False
-
-
-def asegurar_campana_pab(
-    id_campana
-):
-
-    archivo = obtener_archivo()
-
-    hoja = archivo.worksheet(
-        "CAMPAÑAS"
-    )
-
-    valores = hoja.get_all_values()
-
-    if valores:
-
-        encabezados = [
-            str(x).strip()
-            for x in valores[0]
-        ]
-
-    else:
-
-        raise ValueError(
-            "CAMPAÑAS no tiene encabezados."
-        )
-
-    if "ID_CAMPAÑA" not in encabezados:
-
-        raise ValueError(
-            "No encontré ID_CAMPAÑA en CAMPAÑAS."
-        )
-
-    i_id = encabezados.index(
-        "ID_CAMPAÑA"
-    )
-
-    for fila in valores[1:]:
-
-        valor = (
-            str(fila[i_id]).strip()
-            if len(fila) > i_id
-            else ""
-        )
-
-        if valor == id_campana:
-            return
-
-    datos = {
-        "ID_CAMPAÑA": id_campana,
-        "NOMBRE_CAMPAÑA": (
-            f"Recordatorios PaB "
-            f"{HOY.strftime('%d/%m/%Y')}"
-        ),
-        "PLANTILLA": "PAB",
-        "FILTRO": "PAB",
-        "FECHA_ENVIO": HOY.strftime(
-            "%d/%m/%Y"
-        ),
-        "HORA_ENVIO": AHORA.strftime(
-            "%H:%M"
-        ),
-        "ESTADO": "PROGRAMADA",
-        "TOTAL_CLIENTES": 0,
-        "ENVIADOS": 0,
-        "PENDIENTES": 0,
-        "ERRORES": 0,
-        "FECHA_CREACIÓN": AHORA.strftime(
-            "%d/%m/%Y %H:%M:%S"
-        ),
-        "COMENTARIOS": (
-            "Campaña creada desde Masivos Bravo"
-        )
-    }
-
-    fila_nueva = construir_fila_por_encabezados(
-        encabezados,
-        datos
-    )
-
-    hoja.append_row(
-        fila_nueva,
-        value_input_option="USER_ENTERED"
-    )
-
-
-def actualizar_contadores_campana_pab(
-    id_campana
-):
-
-    archivo = obtener_archivo()
-
-    hoja_cola = archivo.worksheet(
-        "COLA_ENVIO"
-    )
-
-    cola_valores = hoja_cola.get_all_values()
-
-    if len(cola_valores) <= 1:
-        return
-
-    encabezados_cola = [
-        str(x).strip()
-        for x in cola_valores[0]
-    ]
-
-    if (
-        "ID_CAMPAÑA" not in encabezados_cola
-        or
-        "ESTADO" not in encabezados_cola
-    ):
-        return
-
-    i_camp = encabezados_cola.index(
-        "ID_CAMPAÑA"
-    )
-    i_estado = encabezados_cola.index(
-        "ESTADO"
-    )
-
-    filas_campana = []
-
-    for fila in cola_valores[1:]:
-
-        camp = (
-            str(fila[i_camp]).strip()
-            if len(fila) > i_camp
-            else ""
-        )
-
-        if camp == id_campana:
-            filas_campana.append(
-                fila
-            )
-
-    total = len(
-        filas_campana
-    )
-
-    enviados = sum(
-        1
-        for fila in filas_campana
-        if (
-            str(
-                fila[i_estado]
-                if len(fila) > i_estado
-                else ""
-            ).strip().upper()
-            == "ENVIADO"
-        )
-    )
-
-    pendientes = sum(
-        1
-        for fila in filas_campana
-        if (
-            str(
-                fila[i_estado]
-                if len(fila) > i_estado
-                else ""
-            ).strip().upper()
-            in {"BORRADOR", "PENDIENTE", "ENVIANDO"}
-        )
-    )
-
-    errores = sum(
-        1
-        for fila in filas_campana
-        if (
-            str(
-                fila[i_estado]
-                if len(fila) > i_estado
-                else ""
-            ).strip().upper()
-            in {
-                "ERROR",
-                "BLOQUEADO"
-            }
-        )
-    )
-
-    hoja_camp = archivo.worksheet(
-        "CAMPAÑAS"
-    )
-
-    camp_valores = hoja_camp.get_all_values()
-
-    if len(camp_valores) <= 1:
-        return
-
-    encabezados_camp = [
-        str(x).strip()
-        for x in camp_valores[0]
-    ]
-
-    if "ID_CAMPAÑA" not in encabezados_camp:
-        return
-
-    i_id = encabezados_camp.index(
-        "ID_CAMPAÑA"
-    )
-
-    fila_objetivo = None
-
-    for numero_fila, fila in enumerate(
-        camp_valores[1:],
-        start=2
-    ):
-
-        camp = (
-            str(fila[i_id]).strip()
-            if len(fila) > i_id
-            else ""
-        )
-
-        if camp == id_campana:
-            fila_objetivo = numero_fila
-            break
-
-    if not fila_objetivo:
-        return
-
-    actualizaciones = {
-        "TOTAL_CLIENTES": total,
-        "ENVIADOS": enviados,
-        "PENDIENTES": pendientes,
-        "ERRORES": errores,
-        "ESTADO": (
-            "EN PROCESO"
-            if pendientes > 0
-            else "FINALIZADA"
-        )
-    }
-
-    for encabezado, valor in actualizaciones.items():
-
-        if encabezado in encabezados_camp:
-
-            col = encabezados_camp.index(
-                encabezado
-            ) + 1
-
-            hoja_camp.update_cell(
-                fila_objetivo,
-                col,
-                valor
-            )
-
-
-def actualizar_estado_pab_proximos(
-    id_evento,
-    id_plantilla
-):
-
-    archivo = obtener_archivo()
-
-    hoja = archivo.worksheet(
-        "PAB_PROXIMOS"
-    )
-
-    valores = hoja.get_all_values()
-
-    if len(valores) <= 1:
-        raise ValueError(
-            "PAB_PROXIMOS no contiene datos."
-        )
-
-    encabezados = [
-        str(x).strip()
-        for x in valores[0]
-    ]
-
-    if "ID_EVENTO" not in encabezados:
-
-        raise ValueError(
-            "No encontré ID_EVENTO en PAB_PROXIMOS."
-        )
-
-    i_evento = encabezados.index(
-        "ID_EVENTO"
-    )
-
-    fila_objetivo = None
-
-    for numero_fila, fila in enumerate(
-        valores[1:],
-        start=2
-    ):
-
-        evento = (
-            str(fila[i_evento]).strip()
-            if len(fila) > i_evento
-            else ""
-        )
-
-        if evento == str(
-            id_evento
-        ).strip():
-
-            fila_objetivo = numero_fila
-            break
-
-    if not fila_objetivo:
-
-        raise ValueError(
-            f"No encontré ID_EVENTO {id_evento}."
-        )
-
-    if id_plantilla == "PAB003":
-        encabezado_estado = "AVISO_3_DIAS"
-
-    else:
-        encabezado_estado = "AVISO_HOY"
-
-    if encabezado_estado not in encabezados:
-
-        raise ValueError(
-            f"No encontré {encabezado_estado} "
-            "en PAB_PROXIMOS."
-        )
-
-    columna = encabezados.index(
-        encabezado_estado
-    ) + 1
-
-    hoja.update_cell(
-        fila_objetivo,
-        columna,
-        "GENERADO"
-    )
-
-
-def agregar_recordatorio_pab_a_cola(
-    fila,
-    vista_previa
-):
-
-    referencia = str(
-        fila.get(
-            "REFERENCIA",
-            ""
-        )
-    ).strip()
-
-    id_evento = str(
-        fila.get(
-            "ID_EVENTO",
-            ""
-        )
-    ).strip()
-
-    email = str(
-        fila.get(
-            "EMAIL",
-            ""
-        )
-    ).strip()
-
-    mora = fila.get(
-        "MORA",
-        ""
-    )
-
-    id_plantilla = str(
-        vista_previa[
-            "id_plantilla"
-        ]
-    ).strip().upper()
-
-    if not referencia:
-        raise ValueError(
-            "El registro no tiene REFERENCIA."
-        )
-
-    if not id_evento:
-        raise ValueError(
-            "El registro no tiene ID_EVENTO."
-        )
-
-    if not email:
-        raise ValueError(
-            "El cliente no tiene correo."
-        )
-
-    if es_mora_180(
-        mora
-    ):
-        raise ValueError(
-            "Cliente excluido automáticamente por Mora 180."
-        )
-
-    referencias_excluidas = obtener_referencias_excluidas()
-
-    if referencia in referencias_excluidas:
-        raise ValueError(
-            "Referencia bloqueada en Excluir_correo."
-        )
-
-    dias = fila.get(
-        "_DIAS"
-    )
-
-    if (
-        id_plantilla == "PAB000"
-        and dias != 0
-    ):
-        raise ValueError(
-            "PAB000 solo puede agregarse el día del pago."
-        )
-
-    if (
-        id_plantilla == "PAB003"
-        and dias != 3
-    ):
-        raise ValueError(
-            "PAB003 solo puede agregarse exactamente 3 días antes."
-        )
-
-    fecha_pab = fila.get(
-        "_FECHA"
-    )
-
-    if existe_envio_pab_en_cola(
-        referencia,
-        id_plantilla,
-        fecha_pab
-    ):
-        raise ValueError(
-            "Este recordatorio ya existe en COLA_ENVIO."
-        )
-
-    id_campana = (
-        f"PAB-{HOY.strftime('%Y%m%d')}"
-    )
-
-    asegurar_campana_pab(
-        id_campana
-    )
-
-    archivo = obtener_archivo()
-
-    hoja_cola = archivo.worksheet(
-        "COLA_ENVIO"
-    )
-
-    encabezados = obtener_encabezados_hoja(
-        hoja_cola
-    )
-
-    id_envio = (
-        f"ENV-PAB-"
-        f"{HOY.strftime('%Y%m%d')}-"
-        f"{referencia}-"
-        f"{id_plantilla}"
-    )
-
-    datos = {
-        "ID_ENVIO": id_envio,
-        "ID_CAMPAÑA": id_campana,
-        "REFERENCIA": referencia,
-        "NOMBRE": str(
-            fila.get(
-                "NOMBRE",
-                ""
-            )
-        ).strip(),
-        "EMAIL": email,
-        "PLANTILLA": id_plantilla,
-        "ASUNTO": vista_previa.get(
-            "asunto",
-            ""
-        ),
-        "ESTADO": "BORRADOR",
-        "FECHA_PROG": AHORA.strftime(
-            "%d/%m/%Y %H:%M"
-        ),
-        "FECHA_ENVIO": "",
-        "INTENTOS": 0,
-        "ERROR": "",
-        "ID_MENSAJE": "",
-        "CUERPO": vista_previa.get(
-            "cuerpo",
-            ""
-        ),
-        "ENCARGADO": str(
-            fila.get(
-                "ENCARGADO",
-                ""
-            )
-        ).strip()
-    }
-
-    fila_nueva = construir_fila_por_encabezados(
-        encabezados,
-        datos
-    )
-
-    hoja_cola.append_row(
-        fila_nueva,
-        value_input_option="USER_ENTERED"
-    )
-
-    actualizar_estado_pab_proximos(
-        id_evento,
-        id_plantilla
-    )
-
-    actualizar_contadores_campana_pab(
-        id_campana
-    )
-
-    st.cache_data.clear()
-
-    return id_envio
-
-
-
-
-def reconstruir_html_pab_actual(referencia, id_plantilla, cuerpo_guardado=""):
-    """
-    Para envíos PaB siempre reconstruye el HTML con el diseño visual actual.
-    Esto evita que una fila antigua de COLA_ENVIO conserve y envíe el CUERPO viejo.
-    """
-    plantilla = str(id_plantilla or "").strip().upper()
-    if plantilla not in {"PAB000", "PAB003"}:
-        return str(cuerpo_guardado or "")
-
-    ref_objetivo = normalizar_referencia(referencia)
-    dias = 0 if plantilla == "PAB000" else 3
-
-    try:
-        if not pab.empty and "REFERENCIA" in pab.columns:
-            coincidencias = pab[
-                pab["REFERENCIA"].apply(normalizar_referencia) == ref_objetivo
-            ].copy()
-
-            if not coincidencias.empty:
-                fila_pab = coincidencias.iloc[0]
-                return html_pab_bravo(
-                    nombre=fila_pab.get("NOMBRE", ""),
-                    fecha_pab=fila_pab.get("FECHA_PAB", ""),
-                    valor_pab=fila_pab.get("VALOR_PAB", ""),
-                    dias=dias,
-                )
-    except Exception:
-        pass
-
-    # Si no se encuentra en PAB_PROXIMOS, no inventamos datos.
-    # Se conserva el cuerpo guardado para no romper otros flujos.
-    return str(cuerpo_guardado or "")
-
-
-def enviar_id_envio_gmail(id_envio, credenciales):
-    """Envía exactamente una fila de COLA_ENVIO si continúa en BORRADOR."""
-    if credenciales is None:
-        raise ValueError("Gmail no está conectado en esta sesión.")
-
-    archivo = obtener_archivo()
-    hoja = archivo.worksheet("COLA_ENVIO")
-    valores = hoja.get_all_values()
-    if len(valores) <= 1:
-        raise ValueError("COLA_ENVIO está vacía.")
-
-    enc = [str(x).strip() for x in valores[0]]
-    requeridas = [
-        "ID_ENVIO", "ID_CAMPAÑA", "REFERENCIA", "EMAIL", "PLANTILLA",
-        "ASUNTO", "CUERPO", "ESTADO", "FECHA_ENVIO", "INTENTOS",
-        "ERROR", "ID_MENSAJE"
-    ]
-    faltan = [c for c in requeridas if c not in enc]
-    if faltan:
-        raise ValueError("Faltan columnas en COLA_ENVIO: " + ", ".join(faltan))
-    idx = {c: enc.index(c) for c in requeridas}
-
-    fila_num = None
-    fila = None
-    for n, f in enumerate(valores[1:], start=2):
-        actual = str(f[idx["ID_ENVIO"]] if len(f) > idx["ID_ENVIO"] else "").strip()
-        if actual == str(id_envio).strip():
-            fila_num, fila = n, f
-            break
-    if fila_num is None:
-        raise ValueError(f"No encontré {id_envio} en COLA_ENVIO.")
-
-    def val(c):
-        i = idx[c]
-        return str(fila[i] if len(fila) > i else "").strip()
-
-    estado = val("ESTADO").upper()
-    if estado == "ENVIADO":
-        return {"estado": "YA_ENVIADO", "gmail_id": val("ID_MENSAJE")}
-    if estado != "BORRADOR":
-        raise ValueError(f"{id_envio} está en estado {estado}; no se reenviará.")
-
-    intentos = entero_seguro(val("INTENTOS"), 0)
-    hoja.update_cell(fila_num, idx["ESTADO"] + 1, "ENVIANDO")
-    hoja.update_cell(fila_num, idx["INTENTOS"] + 1, intentos + 1)
-
-    try:
-        cuerpo_a_enviar = reconstruir_html_pab_actual(
-            referencia=val("REFERENCIA"),
-            id_plantilla=val("PLANTILLA"),
-            cuerpo_guardado=val("CUERPO"),
-        )
-
-        r = enviar_mensaje_gmail(
-            credenciales,
-            val("EMAIL"),
-            val("ASUNTO"),
-            cuerpo_a_enviar,
-        )
-        gmail_id = str(r.get("id", "")).strip()
-        hoja.update_cell(
-            fila_num, idx["FECHA_ENVIO"] + 1,
-            datetime.now(TZ).strftime("%d/%m/%Y %H:%M:%S")
-        )
-        hoja.update_cell(fila_num, idx["ID_MENSAJE"] + 1, gmail_id)
-        hoja.update_cell(fila_num, idx["ERROR"] + 1, "")
-        hoja.update_cell(fila_num, idx["ESTADO"] + 1, "ENVIADO")
-        return {"estado": "ENVIADO", "gmail_id": gmail_id}
-    except Exception as e:
-        hoja.update_cell(fila_num, idx["ERROR"] + 1, str(e)[:500])
-        hoja.update_cell(fila_num, idx["ESTADO"] + 1, "ERROR")
-        raise
-
-
-def enviar_pab_hoy_ahora(credenciales):
-    """
-    Genera y envía los PAB000 pendientes de HOY.
-    Respeta sin email, Mora 180, Excluir_correo, AVISO_HOY y duplicados.
-    """
-    if credenciales is None:
-        raise ValueError("Gmail no está conectado. Ve a Configuración.")
-
-    if pab.empty:
-        return {"enviados": 0, "errores": 0, "omitidos": 0, "detalle": []}
-
-    candidatos = pab[
-        (pab["_DIAS"] == 0)
-        & (~pab["_AVISO_HOY"])
-    ].copy()
-
-    enviados = errores = omitidos = 0
-    detalle = []
-
-    for _, fila in candidatos.iterrows():
-        ref = str(fila.get("REFERENCIA", "")).strip()
-        email = str(fila.get("EMAIL", "")).strip()
-        try:
-            vista = preparar_vista_previa_pab(fila)
-            if vista is None or vista.get("error"):
-                omitidos += 1
-                detalle.append({"REFERENCIA": ref, "EMAIL": email, "RESULTADO": "OMITIDO"})
-                continue
-
-            # agregar_recordatorio... valida email, mora, exclusiones y duplicados.
-            try:
-                id_envio = agregar_recordatorio_pab_a_cola(fila, vista)
-            except Exception as e:
-                # Si ya existe en cola, recuperar el ID determinístico y procesarlo
-                # solo si todavía está BORRADOR.
-                id_envio = (
-                    f"ENV-PAB-{HOY.strftime('%Y%m%d')}-{ref}-PAB000"
-                )
-                if "ya existe en COLA_ENVIO" not in str(e):
-                    raise
-
-            r = enviar_id_envio_gmail(id_envio, credenciales)
-            if r["estado"] in {"ENVIADO", "YA_ENVIADO"}:
-                enviados += 1
-                detalle.append({"REFERENCIA": ref, "EMAIL": email, "RESULTADO": r["estado"]})
-            else:
-                omitidos += 1
-        except Exception as e:
-            errores += 1
-            detalle.append({"REFERENCIA": ref, "EMAIL": email, "RESULTADO": f"ERROR: {e}"})
-
-    # Actualizar la campaña de hoy después de procesar todos los correos.
-    try:
-        actualizar_contadores_campana_pab(f"PAB-{HOY.strftime('%Y%m%d')}")
-    except Exception:
-        pass
-
-    st.cache_data.clear()
-    return {
-        "enviados": enviados,
-        "errores": errores,
-        "omitidos": omitidos,
-        "detalle": detalle,
-    }
-
+    # Compatibilidad con llamadas antiguas: ya NO gobierna la exclusión.
+    texto = normalizar(valor).replace("_", " ")
+    return texto in {"366 días de mora", "180"}
 
 
 # ============================================================
@@ -2663,6 +1902,40 @@ def obtener_ids_plantillas_activas():
         for x in vista["ID_PLANTILLA"].tolist()
         if str(x).strip()
     })
+
+
+def nombre_plantilla(id_plantilla):
+    idp = str(id_plantilla or "").strip()
+    if not idp:
+        return ""
+    if idp.upper() == ALIANZAS_TEMPLATE_ID:
+        return "Oferta especial Alianzas"
+    if not plantillas.empty and "ID_PLANTILLA" in plantillas.columns:
+        cand = plantillas[
+            plantillas["ID_PLANTILLA"].astype(str).str.strip().str.upper() == idp.upper()
+        ]
+        if not cand.empty:
+            for col in ["NOMBRE", "NOMBRE_PLANTILLA", "PLANTILLA"]:
+                if col in cand.columns:
+                    nombre = str(cand.iloc[0].get(col, "")).strip()
+                    if nombre:
+                        return nombre
+    nombres_default = {
+        "PAB000": "Pago a banco - Hoy",
+        "PAB003": "Pago a banco - Recordatorio 3 días",
+        "T001": "Mora 1 día",
+        "T030": "Mora 30 días",
+        "T060": "Mora 60 días",
+        "T090": "Mora 90 días",
+        "TCE001": "Estado de cuenta",
+        "TCE002": "Regularización de mora",
+    }
+    return nombres_default.get(idp.upper(), idp)
+
+
+def etiqueta_plantilla(id_plantilla):
+    nombre = nombre_plantilla(id_plantilla)
+    return f"{nombre} ({id_plantilla})" if nombre != str(id_plantilla) else nombre
 
 
 def obtener_plantilla_generica(id_plantilla):
@@ -2922,15 +2195,23 @@ def preparar_clientes_campana(fila_campana):
     base = base.drop_duplicates(subset=["_REF"], keep="first").copy()
 
     if tipo == "PRUEBA":
-        n_mora_180 = 0
+        n_mora_366 = 0
+        n_sin_dias_mora = 0
         n_excl = 0
     else:
+        # Alianzas mantiene su propia lógica comercial. Para clientes regulares,
+        # la fuente oficial de elegibilidad es Comisión!M por referencia.
         if tipo == "ALIANZAS":
-            n_mora_180 = 0
+            n_mora_366 = 0
+            n_sin_dias_mora = 0
         else:
-            mask_180 = base["MORA"].apply(es_mora_180)
-            n_mora_180 = entero_seguro(mask_180.sum())
-            base = base[~mask_180].copy()
+            mapa_mora = mapa_dias_mora_actual()
+            base["_DIAS_MORA_ACTUAL"] = base["_REF"].map(mapa_mora)
+            mask_sin_mora = base["_DIAS_MORA_ACTUAL"].isna()
+            n_sin_dias_mora = entero_seguro(mask_sin_mora.sum())
+            mask_366 = base["_DIAS_MORA_ACTUAL"].fillna(999999) >= 366
+            n_mora_366 = entero_seguro((mask_366 & ~mask_sin_mora).sum())
+            base = base[~mask_366].copy()
         excluidas = referencias_excluidas_normalizadas()
         mask_excl = base["_REF"].isin(excluidas)
         n_excl = entero_seguro(mask_excl.sum())
@@ -2961,7 +2242,9 @@ def preparar_clientes_campana(fila_campana):
         "total_base": total_base,
         "elegibles": len(base),
         "excluidos": n_excl,
-        "mora_180": n_mora_180,
+        "mora_180": n_mora_366,
+        "mora_366": n_mora_366,
+        "sin_dias_mora": n_sin_dias_mora,
         "sin_email": n_sin_email,
         "duplicados": duplicados,
         "no_encontradas": no_encontradas,
@@ -3468,6 +2751,41 @@ def marcar_respuesta_gestionada(
 
 
 # ============================================================
+# PAGOS AL DÍA DESDE UNIDOS_EST
+# ============================================================
+
+@st.cache_data(ttl=600, show_spinner=False)
+def cargar_pagos_al_dia_unidos():
+    """Unidos_Est: A=referencia, H=próxima fecha de pago."""
+    hoja = obtener_hoja_externa(EXCLUSIONES_SPREADSHEET_ID, HOJA_UNIDOS_EST)
+    valores = hoja.get("A:H")
+    filas = []
+    for fila in valores[1:]:
+        ref = normalizar_referencia(fila[0] if len(fila) > 0 else "")
+        fecha_raw = fila[7] if len(fila) > 7 else ""
+        if not ref or not str(fecha_raw).strip():
+            continue
+        fecha = pd.to_datetime(fecha_raw, errors="coerce", dayfirst=True)
+        if pd.isna(fecha):
+            continue
+        dias = (fecha.date() - HOY).days
+        if dias not in {0, 3}:
+            continue
+        filas.append({
+            "REFERENCIA": ref,
+            "FECHA_PAGO": fecha.strftime("%d/%m/%Y"),
+            "_FECHA": fecha,
+            "_DIAS": dias,
+            "TIPO_AVISO": "PAB000" if dias == 0 else "PAB003",
+        })
+    if not filas:
+        return pd.DataFrame(columns=["REFERENCIA","FECHA_PAGO","_FECHA","_DIAS","TIPO_AVISO"])
+    df = pd.DataFrame(filas)
+    # Una referencia puede repetirse; para el mismo día conservamos una sola fila.
+    return df.drop_duplicates(subset=["REFERENCIA", "FECHA_PAGO"], keep="first")
+
+
+# ============================================================
 # CARGAR DATOS
 # ============================================================
 
@@ -3505,6 +2823,8 @@ try:
     )
 
     alianzas = cargar_alianzas_local()
+
+    pagos_al_dia_unidos = cargar_pagos_al_dia_unidos()
 
 except Exception as e:
 
@@ -4025,6 +3345,11 @@ if menu == "🏠 Inicio":
 # ============================================================
 
 elif menu == "🏦 Pagos a Banco":
+
+    st.info(
+        f"📅 Unidos_Est: {len(pagos_al_dia_unidos)} clientes tienen pago hoy o exactamente en 3 días. "
+        "Esta fuente ya queda disponible en el app para el motor automático; el envío programado se completa en GitHub."
+    )
 
     st.markdown(
         '<div class="titulo">'
@@ -4852,19 +4177,18 @@ elif menu == "🏦 Pagos a Banco":
                             "El cliente no tiene correo."
                         )
 
-                    elif es_mora_180(
-                        fila.get(
-                            "MORA",
-                            ""
-                        )
-                    ):
+                    else:
+                        dias_mora_actual = dias_mora_referencia(fila.get("REFERENCIA", ""))
+                        if dias_mora_actual is None:
+                            puede_agregar = False
+                            motivo_bloqueo = "No encontré días de mora en Comisión!M."
+                        elif dias_mora_actual >= 366:
+                            puede_agregar = False
+                            motivo_bloqueo = (
+                                f"Cliente excluido por {dias_mora_actual} días de mora (debe ser < 366)."
+                            )
 
-                        puede_agregar = False
-                        motivo_bloqueo = (
-                            "Cliente excluido por Mora 180."
-                        )
-
-                    elif (
+                    if puede_agregar and (
                         vista_previa["id_plantilla"] == "PAB000"
                         and fila.get("_AVISO_HOY", False)
                     ):
@@ -4874,7 +4198,7 @@ elif menu == "🏦 Pagos a Banco":
                             "El recordatorio de hoy ya figura como generado."
                         )
 
-                    elif (
+                    elif puede_agregar and (
                         vista_previa["id_plantilla"] == "PAB003"
                         and fila.get("_AVISO_3", False)
                     ):
@@ -4929,7 +4253,7 @@ elif menu == "🏦 Pagos a Banco":
                             )
 
                 st.caption(
-                    "Masivos Bravo valida duplicados, Mora 180 y "
+                    "Masivos Bravo valida duplicados, días de mora < 366 y "
                     "Excluir_correo antes de escribir en COLA_ENVIO."
                 )
 
@@ -5769,6 +5093,7 @@ elif menu == "📧 Campañas":
                     plantilla_campana = st.selectbox(
                         "Plantilla",
                         ids_plantillas,
+                        format_func=etiqueta_plantilla,
                         help=(
                             "Elige la plantilla que quieres enviar a los destinatarios de PRUEBAS."
                             if es_prueba
@@ -5799,7 +5124,7 @@ elif menu == "📧 Campañas":
                 plantilla_campana = MAPA_PLANTILLAS_MORA.get(tipo_campana, "")
                 st.text_input(
                     "Plantilla",
-                    value=plantilla_campana,
+                    value=etiqueta_plantilla(plantilla_campana),
                     disabled=True,
                     help="La plantilla se asigna automáticamente según la mora."
                 )
@@ -5893,14 +5218,14 @@ elif menu == "📧 Campañas":
                             r1.metric("Elegibles", len(candidatos))
                             r2.metric("No encontradas", resumen.get("no_encontradas", 0))
                             r3.metric("Excluir_correo", resumen.get("excluidos", 0))
-                            r4.metric("Mora 180", resumen.get("mora_180", 0))
+                            r4.metric("366 días de mora", resumen.get("mora_180", 0))
                             r5.metric("Sin correo", resumen.get("sin_email", 0))
                             r6.metric("Duplicados", resumen.get("duplicados", 0))
                         else:
                             r1, r2, r3, r4, r5 = st.columns(5)
                             r1.metric("Elegibles", len(candidatos))
                             r2.metric("Excluir_correo", resumen.get("excluidos", 0))
-                            r3.metric("Mora 180", resumen.get("mora_180", 0))
+                            r3.metric("366 días de mora", resumen.get("mora_180", 0))
                             r4.metric("Sin correo", resumen.get("sin_email", 0))
                             r5.metric("Duplicados", resumen.get("duplicados", 0))
 
