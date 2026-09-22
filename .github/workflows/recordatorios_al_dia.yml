@@ -15,10 +15,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      MI_JSON: ${{ secrets.MI_JSON }}
-      GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
-      GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
-      GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
+  MI_JSON: ${{ secrets.MI_JSON }}
+  GOOGLE_CLIENT_ID: ${{ secrets.GMAIL_CLIENT_ID }}
+  GOOGLE_CLIENT_SECRET: ${{ secrets.GMAIL_CLIENT_SECRET }}
+  GOOGLE_REFRESH_TOKEN: ${{ secrets.GMAIL_REFRESH_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
