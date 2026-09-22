@@ -105,76 +105,174 @@ def ids_existentes(gc):
 
 def main():
     ahora = datetime.now(TZ)
-    objetivo = ahora.date() - timedelta(days=3)
-    print("="*72)
-    print("DIAGNÓSTICO - BIENVENIDA A ESTRUCTURADOS")
+    hoy = ahora.date()
+    desde = hoy - timedelta(days=6)
+
+    print("=" * 76)
+    print("DIAGNÓSTICO 7 DÍAS - BIENVENIDA A ESTRUCTURADOS")
     print(f"Fecha/hora Colombia: {ahora.strftime('%d/%m/%Y %H:%M:%S')}")
-    print(f"Fecha liquidación objetivo: {objetivo.strftime('%d/%m/%Y')}")
+    print(
+        f"Ventana revisada: {desde.strftime('%d/%m/%Y')} "
+        f"al {hoy.strftime('%d/%m/%Y')}"
+    )
     print("NINGÚN CORREO SERÁ ENVIADO / NINGÚN SHEET SERÁ MODIFICADO")
-    print("="*72)
+    print("=" * 76)
 
     gc = sheets()
-    filas = gc.open_by_key(PIPELINE_SPREADSHEET_ID).worksheet(PIPELINE_SHEET).get("A:P")
+    filas = (
+        gc.open_by_key(PIPELINE_SPREADSHEET_ID)
+        .worksheet(PIPELINE_SHEET)
+        .get("A:P")
+    )
     maestro = maestro_clientes(gc)
     excluir = exclusiones(gc)
     existentes = ids_existentes(gc)
 
+    # Una referencia puede aparecer varias veces.
+    # Consolidamos por referencia + fecha de liquidación.
+    # Si al menos una fila de ese evento tiene P=TRUE,
+    # consideramos la referencia estructurada para esa fecha.
     eventos = {}
-    filas_fecha = filas_true = invalidas = 0
+    invalidas = 0
+    filas_ventana = 0
+    filas_true = 0
 
     for f in filas[1:]:
-        ref = norm_ref(f[7] if len(f)>7 else "")       # H
-        fecha = parse_fecha(f[2] if len(f)>2 else "") # C
-        est = es_true(f[15] if len(f)>15 else "")     # P
+        ref = norm_ref(f[7] if len(f) > 7 else "")        # H
+        fecha = parse_fecha(f[2] if len(f) > 2 else "")  # C
+        est = es_true(f[15] if len(f) > 15 else "")      # P
+
         if not fecha:
             invalidas += 1
             continue
-        if fecha != objetivo: continue
-        filas_fecha += 1
-        if not ref: continue
+
+        if not (desde <= fecha <= hoy):
+            continue
+
+        filas_ventana += 1
+
+        if not ref:
+            continue
+
         clave = (ref, fecha.isoformat())
-        e = eventos.setdefault(clave, {"REFERENCIA":ref,"FECHA":fecha,"ESTRUCTURADO":False})
+        evento = eventos.setdefault(
+            clave,
+            {
+                "REFERENCIA": ref,
+                "FECHA": fecha,
+                "ESTRUCTURADO": False,
+                "FILAS": 0,
+            },
+        )
+        evento["FILAS"] += 1
+
         if est:
-            e["ESTRUCTURADO"] = True
+            evento["ESTRUCTURADO"] = True
             filas_true += 1
 
-    estructurados = [e for e in eventos.values() if e["ESTRUCTURADO"]]
+    estructurados = [
+        e for e in eventos.values()
+        if e["ESTRUCTURADO"]
+    ]
 
-    excl = dup = sinmail = 0
-    listos = []
-    for e in estructurados:
-        ref, fecha = e["REFERENCIA"], e["FECHA"]
-        ide = f"ENV-ESTBIENV-{fecha.strftime('%Y%m%d')}-{ref}-{PLANTILLA_ID}"
-        if ref in excluir:
-            excl += 1; continue
-        if ide in existentes:
-            dup += 1; continue
-        cli = maestro.get(ref, {})
-        nombre = str(cli.get("NOMBRE","")).strip() or "Cliente"
-        email = str(cli.get("EMAIL","")).strip().lower()
-        if not correo_valido(email):
-            sinmail += 1; continue
-        listos.append((ref, fecha, email, nombre))
-
-    print(f"Filas revisadas en BD 2026: {max(len(filas)-1,0)}")
-    print(f"Filas con fecha objetivo: {filas_fecha}")
-    print(f"Filas fecha objetivo con P=TRUE: {filas_true}")
-    print(f"Referencias únicas estructuradas: {len(estructurados)}")
+    print(f"Filas revisadas en BD 2026: {max(len(filas) - 1, 0)}")
+    print(f"Filas dentro de la ventana: {filas_ventana}")
+    print(f"Filas dentro de la ventana con P=TRUE: {filas_true}")
+    print(f"Eventos únicos estructurados: {len(estructurados)}")
     print(f"Filas con fecha inválida/vacía: {invalidas}")
-    print("-"*72)
-    print(f"{PLANTILLA_ID} - BIENVENIDA 3 DÍAS DESPUÉS")
-    print(f"Excluidos por Excluir_correo: {excl}")
-    print(f"Ya existentes en COLA_ENVIO: {dup}")
-    print(f"Sin correo válido: {sinmail}")
-    print(f"LISTOS PARA ENVIAR: {len(listos)}")
     print()
-    for ref, fecha, email, nombre in sorted(listos):
-        print(f"{ref} | {fecha.strftime('%d/%m/%Y')} | {ocultar_email(email)} | {nombre}")
+
+    print("=" * 76)
+    print("RESUMEN POR FECHA")
+    print("=" * 76)
+
+    for n in range(7):
+        fecha = desde + timedelta(days=n)
+        eventos_fecha = [
+            e for e in estructurados
+            if e["FECHA"] == fecha
+        ]
+        refs_fecha = {
+            e["REFERENCIA"]
+            for e in eventos_fecha
+        }
+        print(
+            f"{fecha.strftime('%d/%m/%Y')} | "
+            f"{len(refs_fecha)} referencias estructuradas"
+        )
+
     print()
-    print("="*72)
-    print(f"TOTAL DE CORREOS QUE SE ENVIARÍAN HOY: {len(listos)}")
-    print("DIAGNÓSTICO FINALIZADO. NINGÚN CORREO FUE ENVIADO.")
-    print("="*72)
+    print("=" * 76)
+    print("DETALLE DE ESTRUCTURADOS EN LOS ÚLTIMOS 7 DÍAS")
+    print("=" * 76)
+
+    total_con_email = 0
+    total_sin_email = 0
+    total_excluidos = 0
+
+    for fecha in sorted({e["FECHA"] for e in estructurados}):
+        eventos_fecha = sorted(
+            [e for e in estructurados if e["FECHA"] == fecha],
+            key=lambda x: x["REFERENCIA"],
+        )
+
+        print()
+        print(
+            f"--- {fecha.strftime('%d/%m/%Y')} "
+            f"({len(eventos_fecha)} referencias) ---"
+        )
+
+        for e in eventos_fecha:
+            ref = e["REFERENCIA"]
+            cli = maestro.get(ref, {})
+            nombre = str(cli.get("NOMBRE", "")).strip() or "SIN NOMBRE"
+            email = str(cli.get("EMAIL", "")).strip().lower()
+
+            estado = "OK"
+
+            if ref in excluir:
+                estado = "EXCLUIR_CORREO"
+                total_excluidos += 1
+            elif not correo_valido(email):
+                estado = "SIN_CORREO"
+                total_sin_email += 1
+            else:
+                total_con_email += 1
+
+            # Solo como referencia diagnóstica:
+            # muestra si el eventual ID de bienvenida ya existe.
+            id_envio = (
+                "ENV-ESTBIENV-"
+                f"{fecha.strftime('%Y%m%d')}-"
+                f"{ref}-"
+                f"{PLANTILLA_ID}"
+            )
+            if id_envio in existentes:
+                estado += " | YA_EN_COLA"
+
+            email_mostrar = ocultar_email(email) if email else "SIN EMAIL"
+
+            print(
+                f"{ref} | "
+                f"{email_mostrar} | "
+                f"{nombre} | "
+                f"{estado}"
+            )
+
+    print()
+    print("=" * 76)
+    print("RESUMEN DE CALIDAD")
+    print("=" * 76)
+    print(f"Estructurados únicos/eventos encontrados: {len(estructurados)}")
+    print(f"Con correo válido: {total_con_email}")
+    print(f"Sin correo válido: {total_sin_email}")
+    print(f"En Excluir_correo: {total_excluidos}")
+    print()
+    print("DIAGNÓSTICO FINALIZADO.")
+    print("NINGÚN CORREO FUE ENVIADO.")
+    print("NINGUNA FILA FUE AGREGADA O MODIFICADA.")
+    print("=" * 76)
+
 
 if __name__ == "__main__":
     main()
