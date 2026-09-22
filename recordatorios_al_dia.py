@@ -20,7 +20,7 @@ HOJA_UNIDOS_EST = "Unidos_Est"
 HOJA_EXCLUIR = "Excluir_correo"
 
 CARTERA_SPREADSHEET_ID = "13Vf32LzRI2V95dIUqfevzm-ZmsDR3d17UTre_7XJ-UU"
-HOJA_CARTERA = "2. Cartera Berex"
+HOJAS_INFO_CLIENTES_V2 = ["Info_Clientes_V2", "Hoja Info_Clientes_V2", ". Hoja Info_Clientes_V2"]
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -91,55 +91,69 @@ def cliente_sheets():
 
 
 def cargar_maestro_clientes(gc):
-    valores = (
-        gc.open_by_key(CARTERA_SPREADSHEET_ID)
-        .worksheet(HOJA_CARTERA)
-        .get("B:G")
-    )
-    if len(valores) <= 1:
-        return {}
+    """
+    Misma fuente de respaldo usada por la app:
+    Info_Clientes_V2
+    C = Referencia
+    E = Nombre cliente
+    F = Email
+    """
+    archivo = gc.open_by_key(CARTERA_SPREADSHEET_ID)
 
-    encabezados = [str(x).strip() for x in valores[0]]
-    pos = {c: i for i, c in enumerate(encabezados)}
+    hoja = None
+    nombre_encontrado = None
+    for nombre_hoja in HOJAS_INFO_CLIENTES_V2:
+        try:
+            hoja = archivo.worksheet(nombre_hoja)
+            nombre_encontrado = nombre_hoja
+            break
+        except Exception:
+            continue
 
-    requeridas = {"Nombre_Cliente", "Email"}
-    faltan = requeridas - set(encabezados)
-    if faltan:
+    if hoja is None:
+        disponibles = [ws.title for ws in archivo.worksheets()]
         raise RuntimeError(
-            "Faltan columnas en 2. Cartera Berex: " + ", ".join(sorted(faltan))
+            "No encontré Info_Clientes_V2. Probé: "
+            + ", ".join(HOJAS_INFO_CLIENTES_V2)
+            + ". Pestañas disponibles: "
+            + ", ".join(disponibles)
         )
 
-    llaves = [
-        c for c in ("Referencia", "Referencia_Berex", "Numero")
-        if c in pos
-    ]
+    valores = hoja.get("C:F")
+    if len(valores) <= 1:
+        print(f"Fuente clientes encontrada: {nombre_encontrado}, pero está vacía.")
+        return {}
+
     maestro = {}
-
     for fila in valores[1:]:
-        def valor(col):
-            i = pos[col]
-            return fila[i] if len(fila) > i else ""
+        referencia = normalizar_referencia(
+            fila[0] if len(fila) > 0 else ""
+        )
+        if not referencia:
+            continue
 
-        nombre = str(valor("Nombre_Cliente")).strip()
-        email = str(valor("Email")).strip().lower()
+        nombre = str(
+            fila[2] if len(fila) > 2 else ""
+        ).strip()
+        email = str(
+            fila[3] if len(fila) > 3 else ""
+        ).strip().lower()
 
-        for columna in llaves:
-            referencia = normalizar_referencia(valor(columna))
-            if not referencia:
-                continue
+        actual = maestro.get(
+            referencia,
+            {"NOMBRE": "", "EMAIL": ""}
+        )
 
-            actual = maestro.get(
-                referencia,
-                {"NOMBRE": "", "EMAIL": ""}
-            )
-            if nombre:
-                actual["NOMBRE"] = nombre
-            if email:
-                actual["EMAIL"] = email
-            maestro[referencia] = actual
+        if nombre and not actual["NOMBRE"]:
+            actual["NOMBRE"] = nombre
+        if email and not actual["EMAIL"]:
+            actual["EMAIL"] = email
 
+        maestro[referencia] = actual
+
+    print(f"Fuente clientes encontrada: {nombre_encontrado}")
+    print(f"Referencias cargadas desde Info_Clientes_V2: {len(maestro)}")
     return maestro
-
 
 def cargar_ids_existentes(gc):
     valores = (
