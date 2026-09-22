@@ -2062,11 +2062,18 @@ def cargar_dias_mora_comision():
 
 
 def dias_mora_referencia(referencia, mora_fallback=""):
+    global DIAS_MORA_POR_REFERENCIA, ERROR_DIAS_MORA
     ref = normalizar_referencia(referencia)
-    try:
-        dias = DIAS_MORA_POR_REFERENCIA.get(ref)
-    except Exception:
-        dias = None
+
+    if DIAS_MORA_POR_REFERENCIA is None:
+        try:
+            DIAS_MORA_POR_REFERENCIA = cargar_dias_mora_comision()
+            ERROR_DIAS_MORA = ""
+        except Exception as e:
+            DIAS_MORA_POR_REFERENCIA = {}
+            ERROR_DIAS_MORA = str(e)
+
+    dias = DIAS_MORA_POR_REFERENCIA.get(ref)
     if dias is not None:
         return int(dias)
     return _extraer_dias_mora_texto(mora_fallback)
@@ -3948,43 +3955,14 @@ except Exception as e:
     st.stop()
 
 
-# Regla operativa de mora: máximo día por referencia en Comisión!M:M.
-try:
-    DIAS_MORA_POR_REFERENCIA = cargar_dias_mora_comision()
-    ERROR_DIAS_MORA = ""
-except Exception as e:
-    DIAS_MORA_POR_REFERENCIA = {}
-    ERROR_DIAS_MORA = str(e)
+# Regla operativa de mora.
+# No consultar DF_MORA_ESTADOS durante el arranque.
+DIAS_MORA_POR_REFERENCIA = None
+ERROR_DIAS_MORA = ""
 
-# Agrega al calendario de recordatorios los clientes Al día de Unidos_Est.
-# Se hace en memoria: no modifica Unidos_Est ni duplica filas en PAB_PROXIMOS.
-try:
-    pagos_al_dia_unidos = cargar_pagos_al_dia_unidos()
-    pagos_al_dia_unidos = enriquecer_pagos_al_dia_con_clientes(pagos_al_dia_unidos, clientes)
-    if not pagos_al_dia_unidos.empty:
-        if pab.empty:
-            pab = pagos_al_dia_unidos.copy()
-        else:
-            for c in set(pab.columns).union(pagos_al_dia_unidos.columns):
-                if c not in pab.columns: pab[c] = ""
-                if c not in pagos_al_dia_unidos.columns: pagos_al_dia_unidos[c] = ""
-            existentes = set(
-                zip(
-                    pab["REFERENCIA"].apply(normalizar_referencia),
-                    pd.to_datetime(pab["FECHA_PAB"], errors="coerce", dayfirst=True).dt.strftime("%Y-%m-%d")
-                )
-            ) if "REFERENCIA" in pab.columns and "FECHA_PAB" in pab.columns else set()
-            pagos_al_dia_unidos = pagos_al_dia_unidos[
-                ~pagos_al_dia_unidos.apply(
-                    lambda r: (normalizar_referencia(r.get("REFERENCIA", "")), pd.to_datetime(r.get("FECHA_PAB", ""), errors="coerce", dayfirst=True).strftime("%Y-%m-%d")) in existentes,
-                    axis=1,
-                )
-            ]
-            pab = pd.concat([pab, pagos_al_dia_unidos[pab.columns]], ignore_index=True)
-    ERROR_PAGOS_AL_DIA = ""
-except Exception as e:
-    pagos_al_dia_unidos = pd.DataFrame()
-    ERROR_PAGOS_AL_DIA = str(e)
+# Unidos_Est no se consulta durante el arranque.
+pagos_al_dia_unidos = pd.DataFrame()
+ERROR_PAGOS_AL_DIA = ""
 
 
 # ============================================================
@@ -4495,6 +4473,70 @@ if menu == "🏠 Inicio":
 # ============================================================
 
 elif menu == "🏦 Pagos a Banco":
+
+    # Carga Unidos_Est únicamente cuando el usuario entra a Pagos a Banco.
+    try:
+        pagos_al_dia_unidos = cargar_pagos_al_dia_unidos()
+        pagos_al_dia_unidos = enriquecer_pagos_al_dia_con_clientes(
+            pagos_al_dia_unidos, clientes
+        )
+
+        if not pagos_al_dia_unidos.empty:
+            if pab.empty:
+                pab = pagos_al_dia_unidos.copy()
+            else:
+                for c in set(pab.columns).union(pagos_al_dia_unidos.columns):
+                    if c not in pab.columns:
+                        pab[c] = ""
+                    if c not in pagos_al_dia_unidos.columns:
+                        pagos_al_dia_unidos[c] = ""
+
+                existentes = set(
+                    zip(
+                        pab["REFERENCIA"].apply(normalizar_referencia),
+                        pd.to_datetime(
+                            pab["FECHA_PAB"], errors="coerce", dayfirst=True
+                        ).dt.strftime("%Y-%m-%d")
+                    )
+                ) if "REFERENCIA" in pab.columns and "FECHA_PAB" in pab.columns else set()
+
+                pagos_al_dia_unidos = pagos_al_dia_unidos[
+                    ~pagos_al_dia_unidos.apply(
+                        lambda r: (
+                            normalizar_referencia(r.get("REFERENCIA", "")),
+                            pd.to_datetime(
+                                r.get("FECHA_PAB", ""),
+                                errors="coerce",
+                                dayfirst=True
+                            ).strftime("%Y-%m-%d")
+                        ) in existentes,
+                        axis=1
+                    )
+                ]
+
+                pab = pd.concat(
+                    [pab, pagos_al_dia_unidos[pab.columns]],
+                    ignore_index=True
+                )
+
+        ERROR_PAGOS_AL_DIA = ""
+    except Exception as e:
+        pagos_al_dia_unidos = pd.DataFrame()
+        ERROR_PAGOS_AL_DIA = str(e)
+
+    if not pab.empty and "FECHA_PAB" in pab.columns:
+        pab["_FECHA"] = pd.to_datetime(
+            pab["FECHA_PAB"], errors="coerce", dayfirst=True
+        ).dt.date
+        pab["_DIAS"] = pab["_FECHA"].apply(
+            lambda x: (x - HOY).days if pd.notna(x) else 9999
+        )
+        pab["_AVISO_3"] = pab.get(
+            "AVISO_3_DIAS", pd.Series([""] * len(pab), index=pab.index)
+        ).apply(es_true)
+        pab["_AVISO_HOY"] = pab.get(
+            "AVISO_HOY", pd.Series([""] * len(pab), index=pab.index)
+        ).apply(es_true)
 
     st.markdown(
         '<div class="titulo">'
