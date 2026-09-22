@@ -8,6 +8,7 @@ TZ = ZoneInfo("America/Bogota")
 
 PIPELINE_SPREADSHEET_ID = "1H3sYEtkeu47POnu8xZMaMtID1Vj53YIcWblWeZ8d0rc"
 PIPELINE_SHEET = "BD 2026"
+PIPELINE_SHEET_MES = "BD del mes"
 
 MASIVOS_SPREADSHEET_ID = "1VGdEUGRDFxBjKRLF1KF7EcHIBf3f8ujtN3iPm6TatjI"
 CARTERA_SPREADSHEET_ID = "13Vf32LzRI2V95dIUqfevzm-ZmsDR3d17UTre_7XJ-UU"
@@ -119,11 +120,25 @@ def main():
     print("=" * 76)
 
     gc = sheets()
-    filas = (
-        gc.open_by_key(PIPELINE_SPREADSHEET_ID)
-        .worksheet(PIPELINE_SHEET)
-        .get("A:P")
-    )
+    libro_pipeline = gc.open_by_key(PIPELINE_SPREADSHEET_ID)
+
+    filas_mes = libro_pipeline.worksheet(PIPELINE_SHEET_MES).get("A:P")
+    filas_historico = libro_pipeline.worksheet(PIPELINE_SHEET).get("A:P")
+
+    # Unificamos ambas fuentes conservando una sola cabecera.
+    # Cada fila lleva además el nombre de su fuente para diagnóstico.
+    filas_fuente = []
+
+    for f in filas_mes[1:]:
+        filas_fuente.append(("BD del mes", f))
+
+    for f in filas_historico[1:]:
+        filas_fuente.append(("BD 2026", f))
+
+    # Se mantiene "filas" solo para los bloques diagnósticos existentes.
+    # Incluye cabecera ficticia + todas las filas de ambas fuentes.
+    filas = [[""] * 16] + [f for _, f in filas_fuente]
+
     maestro = maestro_clientes(gc)
     excluir = exclusiones(gc)
     existentes = ids_existentes(gc)
@@ -239,7 +254,7 @@ def main():
     filas_ventana = 0
     filas_true = 0
 
-    for f in filas[1:]:
+    for fuente, f in filas_fuente:
         ref = norm_ref(f[7] if len(f) > 7 else "")        # H
         fecha = parse_fecha(f[2] if len(f) > 2 else "")  # C
         est = es_true(f[15] if len(f) > 15 else "")      # P
@@ -264,9 +279,11 @@ def main():
                 "FECHA": fecha,
                 "ESTRUCTURADO": False,
                 "FILAS": 0,
+                "FUENTES": set(),
             },
         )
         evento["FILAS"] += 1
+        evento["FUENTES"].add(fuente)
 
         if est:
             evento["ESTRUCTURADO"] = True
@@ -277,7 +294,9 @@ def main():
         if e["ESTRUCTURADO"]
     ]
 
-    print(f"Filas revisadas en BD 2026: {max(len(filas) - 1, 0)}")
+    print(f"Filas revisadas en BD del mes: {max(len(filas_mes) - 1, 0)}")
+    print(f"Filas revisadas en BD 2026: {max(len(filas_historico) - 1, 0)}")
+    print(f"Filas combinadas revisadas: {len(filas_fuente)}")
     print(f"Filas dentro de la ventana: {filas_ventana}")
     print(f"Filas dentro de la ventana con P=TRUE: {filas_true}")
     print(f"Eventos únicos estructurados: {len(estructurados)}")
@@ -354,11 +373,13 @@ def main():
 
             email_mostrar = ocultar_email(email) if email else "SIN EMAIL"
 
+            fuentes = ",".join(sorted(e.get("FUENTES", [])))
             print(
                 f"{ref} | "
                 f"{email_mostrar} | "
                 f"{nombre} | "
-                f"{estado}"
+                f"{estado} | "
+                f"FUENTE={fuentes}"
             )
 
     print()
