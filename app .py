@@ -223,45 +223,87 @@ def credenciales_gmail_sesion():
     )
 
 def procesar_callback_oauth():
-    codigo = st.query_params.get("code")
-    state = st.query_params.get("state")
-    if not codigo or st.session_state.get("google_oauth_credentials"):
-        return
-    state_esperado = st.session_state.get("google_oauth_state")
-    # Un redeploy puede conservar ?code=... en la URL aunque la sesión que inició
-    # OAuth ya no exista. En ese caso NO intentamos canjear el código durante el
-    # arranque, porque puede dejar la app esperando una llamada externa.
-    if not state_esperado:
+    """
+    Procesa el regreso de Google OAuth.
+
+    Streamlit puede recrear la sesión entre la salida hacia Google y el callback.
+    Por eso el callback no puede depender obligatoriamente de que
+    google_oauth_state siga existiendo en session_state.
+    """
+    code = st.query_params.get("code")
+    if isinstance(code, list):
+        code = code[0] if code else None
+
+    error_oauth = st.query_params.get("error")
+    if isinstance(error_oauth, list):
+        error_oauth = error_oauth[0] if error_oauth else None
+
+    if error_oauth:
+        st.error(f"Google no autorizó la conexión: {error_oauth}")
         st.query_params.clear()
         return
-    if state != state_esperado:
+
+    if not code:
+        return
+
+    state = st.query_params.get("state")
+    if isinstance(state, list):
+        state = state[0] if state else None
+
+    state_esperado = st.session_state.get("google_oauth_state")
+
+    # Si la misma sesión sigue viva, sí validamos state.
+    # Si Streamlit recreó la sesión, permitimos continuar: Google ya devolvió
+    # un authorization code de un solo uso al redirect_uri registrado.
+    if state_esperado and state and state != state_esperado:
         st.error("El estado de OAuth no coincide. Intenta conectar nuevamente.")
         st.query_params.clear()
-        return
-    try:
-        flujo = crear_flujo_oauth(state=state)
-        cfg = obtener_config_oauth()
-        flujo.fetch_token(code=codigo)
-        c = flujo.credentials
-        st.session_state["google_oauth_credentials"] = {
-            "token": c.token, "refresh_token": c.refresh_token,
-            "client_id": cfg["client_id"], "client_secret": cfg["client_secret"],
-            "scopes": list(c.scopes or GOOGLE_OAUTH_SCOPES),
-        }
-        r = requests.get(
-            "https://openidconnect.googleapis.com/v1/userinfo",
-            headers={"Authorization": f"Bearer {c.token}"}, timeout=15
-        )
-        if r.ok:
-            st.session_state["google_oauth_email"] = r.json().get("email", "")
         st.session_state.pop("google_oauth_state", None)
+        return
+
+    try:
+        flujo = crear_flujo_oauth()
+
+        # fetch_token usa exactamente el redirect_uri configurado en crear_flujo_oauth().
+        flujo.fetch_token(code=code)
+        cred = flujo.credentials
+
+        datos = {
+            "token": cred.token,
+            "refresh_token": cred.refresh_token,
+            "token_uri": cred.token_uri,
+            "client_id": cred.client_id,
+            "client_secret": cred.client_secret,
+            "scopes": list(cred.scopes or GOOGLE_OAUTH_SCOPES),
+        }
+
+        # Si Google no devuelve refresh_token en una reconexión, conservar uno
+        # previo de la misma sesión cuando exista.
+        anteriores = st.session_state.get("google_oauth_credentials", {}) or {}
+        if not datos["refresh_token"]:
+            datos["refresh_token"] = anteriores.get("refresh_token")
+
+        st.session_state["google_oauth_credentials"] = datos
+
+        # Verificar la cuenta conectada antes de dar el callback por terminado.
+        servicio = build("gmail", "v1", credentials=cred, cache_discovery=False)
+        perfil = servicio.users().getProfile(userId="me").execute()
+        st.session_state["google_oauth_email"] = str(
+            perfil.get("emailAddress", "") or ""
+        ).strip()
+
+        st.session_state.pop("google_oauth_state", None)
+
+        # El código OAuth es de un solo uso. Se limpia únicamente después de
+        # haber guardado correctamente las credenciales.
         st.query_params.clear()
         st.rerun()
+
     except Exception as e:
+        # Limpiar el code evita intentar canjear el mismo código en cada rerun.
+        st.query_params.clear()
+        st.session_state.pop("google_oauth_state", None)
         st.error(f"No pude completar la conexión con Google: {e}")
-
-procesar_callback_oauth()
-
 
 # ============================================================
 # GMAIL / ENVÍO CONTROLADO
