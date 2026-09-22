@@ -1476,13 +1476,13 @@ PLANTILLAS_AL_DIA = {
     "ALDIA003": {
         "ID_PLANTILLA": "ALDIA003",
         "NOMBRE": "Cliente al día · 3 días antes",
-        "ASUNTO": "Recordatorio de tu próxima fecha de pago | Bravo",
+        "ASUNTO": "Se acerca la fecha de tu apartado mensual | Bravo",
         "ESTADO": "ACTIVA",
     },
     "ALDIA000": {
         "ID_PLANTILLA": "ALDIA000",
-        "NOMBRE": "Cliente al día · fecha de pago hoy",
-        "ASUNTO": "Hoy es tu fecha de pago | Bravo",
+        "NOMBRE": "Cliente al día · apartado mensual hoy",
+        "ASUNTO": "Hoy es la fecha de tu apartado mensual | Bravo",
         "ESTADO": "ACTIVA",
     },
 }
@@ -1495,7 +1495,7 @@ def plantilla_al_dia_virtual(id_plantilla):
 
 
 def html_al_dia_bravo(nombre, fecha_pago, dias):
-    """HTML para recordar la fecha de pago de clientes que están al día."""
+    """HTML para recordar la fecha del apartado mensual de clientes que están al día."""
     import html as _html
 
     nombre = _html.escape(str(nombre or "Cliente").strip() or "Cliente")
@@ -1503,15 +1503,15 @@ def html_al_dia_bravo(nombre, fecha_pago, dias):
     dias = int(numero(dias))
 
     if dias == 0:
-        intro = "Te recordamos que hoy corresponde la fecha programada de tu próximo pago en Bravo."
-        destacado = "Hoy es tu fecha de pago"
-        destacado_2 = "Realízalo durante el día para mantener tu programa al día."
+        intro = "Te recordamos que hoy es la fecha de tu apartado mensual en Bravo."
+        destacado = "Hoy es la fecha de tu apartado mensual"
+        destacado_2 = "Ten presente esta fecha para mantener tu programa al día."
         fondo_destacado = "#e9f7ff"
         color_destacado = "#147fd1"
     else:
-        intro = "Queremos recordarte que se acerca la fecha de tu próximo pago en Bravo."
+        intro = "Queremos recordarte que se acerca la fecha de tu apartado mensual en Bravo."
         destacado = "Faltan 3 días"
-        destacado_2 = "para tu fecha de pago."
+        destacado_2 = "para la fecha de tu apartado mensual."
         fondo_destacado = "#f1edff"
         color_destacado = "#5b45c6"
 
@@ -1532,14 +1532,14 @@ def html_al_dia_bravo(nombre, fecha_pago, dias):
 <tr><td style="padding:0 48px 22px;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:{fondo_destacado};border-radius:18px;border-collapse:separate;"><tr>
 <td width="145" align="center" valign="middle" style="padding:28px 12px;font-size:68px;line-height:75px;">&#128197;</td>
 <td valign="middle" style="padding:28px 28px 28px 8px;">
-<div style="font-size:14px;line-height:20px;font-weight:800;text-transform:uppercase;color:{color_destacado};">Tu fecha de pago es</div>
+<div style="font-size:14px;line-height:20px;font-weight:800;text-transform:uppercase;color:{color_destacado};">Fecha de tu apartado mensual</div>
 <div style="padding-top:5px;font-size:29px;line-height:36px;font-weight:800;color:#11183f;">{fecha_txt}</div>
 <div style="margin-top:18px;padding:13px 16px;background:#ffffff;border-radius:12px;">
 <span style="font-size:19px;line-height:25px;font-weight:800;color:{color_destacado};">{destacado}</span><br>
 <span style="font-size:16px;line-height:23px;color:#525b82;">{destacado_2}</span>
 </div></td></tr></table></td></tr>
 
-<tr><td style="padding:0 48px 16px;font-size:17px;line-height:27px;color:#525b82;">Realizar tu pago en la fecha acordada te permite mantener tu programa al día y continuar avanzando en tu proceso.</td></tr>
+<tr><td style="padding:0 48px 16px;font-size:17px;line-height:27px;color:#525b82;">Tener presente la fecha de tu apartado mensual te ayuda a mantener tu programa al día y continuar avanzando en tu proceso.</td></tr>
 <tr><td style="padding:0 48px 22px;font-size:17px;line-height:27px;color:#525b82;">Si tienes alguna duda o necesitas apoyo, puedes comunicarte con nuestro equipo por WhatsApp.</td></tr>
 
 <tr><td style="padding:2px 48px 30px;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr>
@@ -3181,7 +3181,7 @@ def nombre_plantilla_visible(id_plantilla):
     nombres_base = {
         "PAB000": "Pago a banco · día del pago",
         "PAB003": "Pago a banco · 3 días antes",
-        "ALDIA000": "Cliente al día · fecha de pago hoy",
+        "ALDIA000": "Cliente al día · apartado mensual hoy",
         "ALDIA003": "Cliente al día · 3 días antes",
         "T001": "1 día en mora",
         "T030": "30 días en mora",
