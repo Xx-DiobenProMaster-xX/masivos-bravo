@@ -2,9 +2,11 @@ name: PaB automático 8AM Bogotá
 
 on:
   workflow_dispatch:
+
   schedule:
-    # GitHub Actions usa UTC. 13:05 UTC = 08:05 America/Bogota.
-    - cron: "5 13 * * *"
+    # Colombia (America/Bogota) = UTC-5.
+    # 13:00 UTC = 08:00 AM Colombia.
+    - cron: "0 13 * * *"
 
 concurrency:
   group: pab-automatico
