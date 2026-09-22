@@ -92,6 +92,63 @@ def maestro_clientes(gc):
     print(f"Referencias cargadas desde Info_Clientes_V2: {len(datos)}")
     return datos
 
+
+def maestro_pab_proximos(gc):
+    """
+    Fuente secundaria de contacto.
+    Busca REFERENCIA / NOMBRE / EMAIL por encabezado en PAB_PROXIMOS.
+    """
+    hoja = gc.open_by_key(MASIVOS_SPREADSHEET_ID).worksheet("PAB_PROXIMOS")
+    valores = hoja.get_all_values()
+
+    if not valores:
+        return {}
+
+    cab = [norm_txt(x) for x in valores[0]]
+
+    def idx(*nombres):
+        for nombre in nombres:
+            n = norm_txt(nombre)
+            if n in cab:
+                return cab.index(n)
+        return None
+
+    i_ref = idx("REFERENCIA", "REFERENCE")
+    i_nombre = idx("NOMBRE", "NOMBRE CLIENTE", "CLIENTE")
+    i_email = idx("EMAIL", "CORREO", "CORREO ELECTRONICO")
+
+    if i_ref is None:
+        raise RuntimeError("PAB_PROXIMOS no contiene columna REFERENCIA.")
+
+    datos = {}
+
+    for fila in valores[1:]:
+        ref = norm_ref(fila[i_ref] if len(fila) > i_ref else "")
+        if not ref:
+            continue
+
+        nombre = ""
+        email = ""
+
+        if i_nombre is not None and len(fila) > i_nombre:
+            nombre = str(fila[i_nombre]).strip()
+
+        if i_email is not None and len(fila) > i_email:
+            email = str(fila[i_email]).strip().lower()
+
+        actual = datos.get(ref, {"NOMBRE": "", "EMAIL": ""})
+
+        if nombre and not actual["NOMBRE"]:
+            actual["NOMBRE"] = nombre
+
+        if email and not actual["EMAIL"]:
+            actual["EMAIL"] = email
+
+        datos[ref] = actual
+
+    print(f"Referencias cargadas desde PAB_PROXIMOS: {len(datos)}")
+    return datos
+
 def exclusiones(gc):
     vals = gc.open_by_key(ESTRUCTURADOS_SPREADSHEET_ID).worksheet(HOJA_EXCLUIR).col_values(1)
     return {norm_ref(x) for x in vals[1:] if norm_ref(x)}
@@ -140,6 +197,7 @@ def main():
     filas = [[""] * 16] + [f for _, f in filas_fuente]
 
     maestro = maestro_clientes(gc)
+    maestro_pab = maestro_pab_proximos(gc)
     excluir = exclusiones(gc)
     existentes = ids_existentes(gc)
 
@@ -345,9 +403,23 @@ def main():
 
         for e in eventos_fecha:
             ref = e["REFERENCIA"]
-            cli = maestro.get(ref, {})
-            nombre = str(cli.get("NOMBRE", "")).strip() or "SIN NOMBRE"
-            email = str(cli.get("EMAIL", "")).strip().lower()
+            cli_info = maestro.get(ref, {})
+            cli_pab = maestro_pab.get(ref, {})
+
+            nombre_info = str(cli_info.get("NOMBRE", "")).strip()
+            email_info = str(cli_info.get("EMAIL", "")).strip().lower()
+            nombre_pab = str(cli_pab.get("NOMBRE", "")).strip()
+            email_pab = str(cli_pab.get("EMAIL", "")).strip().lower()
+
+            nombre = nombre_info or nombre_pab or "SIN NOMBRE"
+            email = email_info if correo_valido(email_info) else email_pab
+
+            fuentes_contacto = []
+            if nombre_info or email_info:
+                fuentes_contacto.append("Info_Clientes_V2")
+            if nombre_pab or email_pab:
+                fuentes_contacto.append("PAB_PROXIMOS")
+            fuente_contacto = ",".join(fuentes_contacto) if fuentes_contacto else "NO_ENCONTRADO"
 
             estado = "OK"
 
@@ -379,8 +451,34 @@ def main():
                 f"{email_mostrar} | "
                 f"{nombre} | "
                 f"{estado} | "
-                f"FUENTE={fuentes}"
+                f"FUENTE={fuentes} | "
+                f"CONTACTO={fuente_contacto}"
             )
+
+    print()
+    print("=" * 76)
+    print("REFERENCIAS SIN CONTACTO EN AMBAS FUENTES")
+    print("=" * 76)
+
+    faltantes_ambas = []
+    for e in estructurados:
+        ref = e["REFERENCIA"]
+        a = maestro.get(ref, {})
+        b = maestro_pab.get(ref, {})
+
+        email_a = str(a.get("EMAIL", "")).strip().lower()
+        email_b = str(b.get("EMAIL", "")).strip().lower()
+
+        if not correo_valido(email_a) and not correo_valido(email_b):
+            faltantes_ambas.append(ref)
+
+    if faltantes_ambas:
+        for ref in sorted(set(faltantes_ambas)):
+            print(ref)
+    else:
+        print("NINGUNA: todas las referencias tienen correo en alguna fuente.")
+
+    print(f"Total sin correo en ambas fuentes: {len(set(faltantes_ambas))}")
 
     print()
     print("=" * 76)
