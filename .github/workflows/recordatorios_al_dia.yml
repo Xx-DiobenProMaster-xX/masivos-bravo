@@ -2,8 +2,10 @@ name: Recordatorios apartados mensuales
 
 on:
   schedule:
-    # 08:00 Bogotá = 13:00 UTC
+    # Todos los días a las 8:00 a. m. hora Colombia
+    # Colombia = UTC-5, por eso 13:00 UTC
     - cron: "0 13 * * *"
+
   workflow_dispatch:
 
 concurrency:
@@ -14,15 +16,26 @@ jobs:
   enviar:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+
     env:
-  MI_JSON: ${{ secrets.MI_JSON }}
-  GOOGLE_CLIENT_ID: ${{ secrets.GMAIL_CLIENT_ID }}
-  GOOGLE_CLIENT_SECRET: ${{ secrets.GMAIL_CLIENT_SECRET }}
-  GOOGLE_REFRESH_TOKEN: ${{ secrets.GMAIL_REFRESH_TOKEN }}
+      MI_JSON: ${{ secrets.MI_JSON }}
+      GOOGLE_CLIENT_ID: ${{ secrets.GMAIL_CLIENT_ID }}
+      GOOGLE_CLIENT_SECRET: ${{ secrets.GMAIL_CLIENT_SECRET }}
+      GOOGLE_REFRESH_TOKEN: ${{ secrets.GMAIL_REFRESH_TOKEN }}
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Descargar repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install gspread google-auth google-api-python-client
-      - run: python recordatorios_al_dia.py
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install gspread google-auth google-api-python-client
+
+      - name: Ejecutar recordatorios de apartados mensuales
+        run: python recordatorios_al_dia.py
