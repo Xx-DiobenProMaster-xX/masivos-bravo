@@ -1,11 +1,16 @@
 import os
 import re
 import json
+import base64
+from email.message import EmailMessage
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import gspread
 from google.oauth2.service_account import Credentials as ServiceAccountCredentials
+from google.oauth2.credentials import Credentials as OAuthCredentials
+from google.auth.transport.requests import Request
+from googleapiclient.discovery import build
 
 
 # ============================================================
@@ -20,12 +25,16 @@ HOJA_UNIDOS_EST = "Unidos_Est"
 HOJA_EXCLUIR = "Excluir_correo"
 
 CARTERA_SPREADSHEET_ID = "13Vf32LzRI2V95dIUqfevzm-ZmsDR3d17UTre_7XJ-UU"
-HOJAS_INFO_CLIENTES_V2 = ["Info_Clientes_V2", "Hoja Info_Clientes_V2", ". Hoja Info_Clientes_V2"]
+HOJA_CARTERA = "2. Cartera Berex"
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
 ]
+
+GMAIL_FROM = "estructurados@gobravo.com.co"
+GMAIL_REPLY_TO = "estructurados@gobravo.com.co"
+GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.send"]
 
 
 def normalizar(texto):
@@ -90,70 +99,125 @@ def cliente_sheets():
     return gspread.authorize(credenciales)
 
 
+
+def cliente_gmail():
+    faltan = [
+        k for k in ("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REFRESH_TOKEN")
+        if not os.environ.get(k)
+    ]
+    if faltan:
+        raise RuntimeError("Faltan variables Gmail: " + ", ".join(faltan))
+    cred = OAuthCredentials(
+        token=None,
+        refresh_token=os.environ["GOOGLE_REFRESH_TOKEN"],
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=os.environ["GOOGLE_CLIENT_ID"],
+        client_secret=os.environ["GOOGLE_CLIENT_SECRET"],
+        scopes=GMAIL_SCOPES,
+    )
+    cred.refresh(Request())
+    return build("gmail", "v1", credentials=cred, cache_discovery=False)
+
+
+def fecha_larga(d):
+    meses = ["enero","febrero","marzo","abril","mayo","junio",
+             "julio","agosto","septiembre","octubre","noviembre","diciembre"]
+    return f"{d.day} de {meses[d.month-1]} de {d.year}"
+
+
+def html_al_dia(nombre, d, dias):
+    import html as html_lib
+    nombre = html_lib.escape(str(nombre or "Cliente"))
+    ft = fecha_larga(d)
+    if dias == 0:
+        intro = "Te recordamos que hoy es la fecha de tu apartado mensual en Bravo."
+        destacado = "Hoy es la fecha de tu apartado mensual"
+        fondo = "#e9f7ff"
+        acento = "#147fd1"
+    else:
+        intro = "Queremos recordarte que se acerca la fecha de tu apartado mensual en Bravo."
+        destacado = "Faltan 3 días para la fecha de tu apartado mensual"
+        fondo = "#f1edff"
+        acento = "#5b45c6"
+    return f"""<!doctype html><html><body style="margin:0;background:#f4f5f9;font-family:Arial;color:#525b82">
+<table width="100%"><tr><td align="center"><table width="700" style="max-width:700px;background:#fff;border-top:6px solid #38278f">
+<tr><td style="padding:28px 48px"><img src="https://drive.google.com/uc?export=view&id=13kK3v4FiyXFa4UzM_au3TllhOhwjvWb7" width="170"></td></tr>
+<tr><td style="padding:5px 48px;font-size:30px;font-weight:800;color:#11183f">Hola, <span style="color:#35238f">{nombre}</span> 👋</td></tr>
+<tr><td style="padding:12px 48px 24px;font-size:18px;line-height:28px">{intro}</td></tr>
+<tr><td style="padding:0 48px 24px"><table width="100%" style="background:{fondo};border-radius:18px"><tr>
+<td style="padding:28px;font-size:55px">📅</td><td style="padding:28px 28px 28px 0">
+<div style="font-size:14px;font-weight:800;color:{acento};text-transform:uppercase">Fecha de tu apartado mensual</div>
+<div style="font-size:29px;font-weight:800;color:#11183f;margin-top:6px">{ft}</div>
+<div style="background:#fff;border-radius:12px;padding:13px 16px;margin-top:18px;font-size:18px;font-weight:800;color:{acento}">{destacado}</div>
+</td></tr></table></td></tr>
+<tr><td style="padding:0 48px 20px;font-size:17px;line-height:27px">Tener presente la fecha de tu apartado mensual te ayuda a mantener tu programa al día y continuar avanzando en tu proceso.</td></tr>
+<tr><td style="padding:0 48px 28px"><a href="https://wa.me/573012411885" style="display:block;background:#12bd70;color:white;text-align:center;padding:18px;border-radius:14px;text-decoration:none;font-size:19px;font-weight:800">Hablar con Bravo por WhatsApp</a></td></tr>
+<tr><td align="center" style="padding:22px;border-top:1px solid #ddd"><b>¡Gracias por ser parte de Bravo!</b><br>Equipo Bravo</td></tr>
+</table></td></tr></table></body></html>"""
+
+
+def enviar_gmail(svc, destinatario, asunto, cuerpo):
+    msg = EmailMessage()
+    msg["To"] = destinatario
+    msg["From"] = f"Bravo S.A.S. <{GMAIL_FROM}>"
+    msg["Reply-To"] = GMAIL_REPLY_TO
+    msg["Subject"] = asunto
+    msg.set_content("Recordatorio de tu apartado mensual en Bravo.")
+    msg.add_alternative(cuerpo, subtype="html")
+    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")
+    return svc.users().messages().send(userId="me", body={"raw": raw}).execute()
+
+
 def cargar_maestro_clientes(gc):
-    """
-    Misma fuente de respaldo usada por la app:
-    Info_Clientes_V2
-    C = Referencia
-    E = Nombre cliente
-    F = Email
-    """
-    archivo = gc.open_by_key(CARTERA_SPREADSHEET_ID)
-
-    hoja = None
-    nombre_encontrado = None
-    for nombre_hoja in HOJAS_INFO_CLIENTES_V2:
-        try:
-            hoja = archivo.worksheet(nombre_hoja)
-            nombre_encontrado = nombre_hoja
-            break
-        except Exception:
-            continue
-
-    if hoja is None:
-        disponibles = [ws.title for ws in archivo.worksheets()]
-        raise RuntimeError(
-            "No encontré Info_Clientes_V2. Probé: "
-            + ", ".join(HOJAS_INFO_CLIENTES_V2)
-            + ". Pestañas disponibles: "
-            + ", ".join(disponibles)
-        )
-
-    valores = hoja.get("C:F")
+    valores = (
+        gc.open_by_key(CARTERA_SPREADSHEET_ID)
+        .worksheet(HOJA_CARTERA)
+        .get("B:G")
+    )
     if len(valores) <= 1:
-        print(f"Fuente clientes encontrada: {nombre_encontrado}, pero está vacía.")
         return {}
 
+    encabezados = [str(x).strip() for x in valores[0]]
+    pos = {c: i for i, c in enumerate(encabezados)}
+
+    requeridas = {"Nombre_Cliente", "Email"}
+    faltan = requeridas - set(encabezados)
+    if faltan:
+        raise RuntimeError(
+            "Faltan columnas en 2. Cartera Berex: " + ", ".join(sorted(faltan))
+        )
+
+    llaves = [
+        c for c in ("Referencia", "Referencia_Berex", "Numero")
+        if c in pos
+    ]
     maestro = {}
+
     for fila in valores[1:]:
-        referencia = normalizar_referencia(
-            fila[0] if len(fila) > 0 else ""
-        )
-        if not referencia:
-            continue
+        def valor(col):
+            i = pos[col]
+            return fila[i] if len(fila) > i else ""
 
-        nombre = str(
-            fila[2] if len(fila) > 2 else ""
-        ).strip()
-        email = str(
-            fila[3] if len(fila) > 3 else ""
-        ).strip().lower()
+        nombre = str(valor("Nombre_Cliente")).strip()
+        email = str(valor("Email")).strip().lower()
 
-        actual = maestro.get(
-            referencia,
-            {"NOMBRE": "", "EMAIL": ""}
-        )
+        for columna in llaves:
+            referencia = normalizar_referencia(valor(columna))
+            if not referencia:
+                continue
 
-        if nombre and not actual["NOMBRE"]:
-            actual["NOMBRE"] = nombre
-        if email and not actual["EMAIL"]:
-            actual["EMAIL"] = email
+            actual = maestro.get(
+                referencia,
+                {"NOMBRE": "", "EMAIL": ""}
+            )
+            if nombre:
+                actual["NOMBRE"] = nombre
+            if email:
+                actual["EMAIL"] = email
+            maestro[referencia] = actual
 
-        maestro[referencia] = actual
-
-    print(f"Fuente clientes encontrada: {nombre_encontrado}")
-    print(f"Referencias cargadas desde Info_Clientes_V2: {len(maestro)}")
     return maestro
+
 
 def cargar_ids_existentes(gc):
     valores = (
@@ -179,178 +243,113 @@ def cargar_ids_existentes(gc):
 def main():
     ahora = datetime.now(TZ)
     hoy = ahora.date()
-
     print("=" * 72)
-    print("DIAGNÓSTICO - RECORDATORIOS DE APARTADO MENSUAL")
-    print("=" * 72)
+    print("RECORDATORIOS DE APARTADO MENSUAL - PRODUCCIÓN")
     print(f"Fecha/hora Colombia: {ahora.strftime('%d/%m/%Y %H:%M:%S')}")
-    print("MODO DIAGNÓSTICO: NINGÚN CORREO SERÁ ENVIADO")
-    print("MODO DIAGNÓSTICO: NO SE MODIFICARÁ NINGÚN GOOGLE SHEET")
-    print()
+    print("=" * 72)
 
     gc = cliente_sheets()
-
     fuente = gc.open_by_key(UNIDOS_EST_SPREADSHEET_ID)
     unidos = fuente.worksheet(HOJA_UNIDOS_EST).get("A:I")
-    excluidos_raw = fuente.worksheet(HOJA_EXCLUIR).col_values(1)
-
     exclusiones = {
         normalizar_referencia(x)
-        for x in excluidos_raw[1:]
+        for x in fuente.worksheet(HOJA_EXCLUIR).col_values(1)[1:]
         if normalizar_referencia(x)
     }
-
     maestro = cargar_maestro_clientes(gc)
-    ids_existentes = cargar_ids_existentes(gc)
 
-    total_filas = 0
-    total_al_dia = 0
-    fechas_invalidas = 0
-
-    candidatos_3 = {}
-    candidatos_0 = {}
-
-    for fila in unidos[1:]:
-        total_filas += 1
-
-        referencia = normalizar_referencia(
-            fila[0] if len(fila) > 0 else ""
-        )
-        status = str(
-            fila[2] if len(fila) > 2 else ""
-        ).strip()
-        fecha = parsear_fecha(
-            fila[7] if len(fila) > 7 else ""
-        )
-
-        if not referencia or normalizar(status) != "AL DIA":
-            continue
-
-        total_al_dia += 1
-
-        if not fecha:
-            fechas_invalidas += 1
-            continue
-
-        dias = (fecha - hoy).days
-        registro = {
-            "REFERENCIA": referencia,
-            "FECHA": fecha,
-            "DIAS": dias,
-        }
-
-        # Deduplicar por referencia + fecha.
-        llave = (referencia, fecha.isoformat())
-        if dias == 3:
-            candidatos_3[llave] = registro
-        elif dias == 0:
-            candidatos_0[llave] = registro
-
-    resumen = {
-        "ALDIA003": {
-            "brutos": len(candidatos_3),
-            "excluidos": 0,
-            "duplicados": 0,
-            "sin_correo": 0,
-            "listos": [],
-        },
-        "ALDIA000": {
-            "brutos": len(candidatos_0),
-            "excluidos": 0,
-            "duplicados": 0,
-            "sin_correo": 0,
-            "listos": [],
-        },
+    libro = gc.open_by_key(MASIVOS_SPREADSHEET_ID)
+    cola = libro.worksheet("COLA_ENVIO")
+    valores_cola = cola.get_all_values()
+    cab = [str(x).strip() for x in valores_cola[0]]
+    idx = {c: i for i, c in enumerate(cab)}
+    requeridas = {"ID_ENVIO","ID_CAMPAÑA","REFERENCIA","NOMBRE","EMAIL","PLANTILLA",
+                  "ASUNTO","ESTADO","FECHA_PROG","FECHA_ENVIO","INTENTOS","ERROR",
+                  "ID_MENSAJE","CUERPO","ENCARGADO"}
+    faltan = requeridas - set(cab)
+    if faltan:
+        raise RuntimeError("Faltan columnas en COLA_ENVIO: " + ", ".join(sorted(faltan)))
+    existentes = {
+        str(f[idx["ID_ENVIO"]]).strip()
+        for f in valores_cola[1:]
+        if len(f) > idx["ID_ENVIO"] and str(f[idx["ID_ENVIO"]]).strip()
     }
 
-    for plantilla, candidatos in (
-        ("ALDIA003", candidatos_3),
-        ("ALDIA000", candidatos_0),
-    ):
-        for registro in candidatos.values():
-            referencia = registro["REFERENCIA"]
-            fecha = registro["FECHA"]
+    candidatos = {}
+    for fila in unidos[1:]:
+        referencia = normalizar_referencia(fila[0] if len(fila) > 0 else "")
+        status = str(fila[2] if len(fila) > 2 else "").strip()
+        d = parsear_fecha(fila[7] if len(fila) > 7 else "")
+        if not referencia or normalizar(status) != "AL DIA" or not d:
+            continue
+        dias = (d - hoy).days
+        if dias not in (0, 3):
+            continue
+        plantilla = "ALDIA000" if dias == 0 else "ALDIA003"
+        candidatos[(referencia, d.isoformat(), plantilla)] = (referencia, d, dias, plantilla)
 
-            if referencia in exclusiones:
-                resumen[plantilla]["excluidos"] += 1
-                continue
+    listos = []
+    excl = dup = sinmail = 0
+    for referencia, d, dias, plantilla in candidatos.values():
+        ide = f"ENV-ALDIA-{d.strftime('%Y%m%d')}-{referencia}-{plantilla}"
+        if referencia in exclusiones:
+            excl += 1; continue
+        if ide in existentes:
+            dup += 1; continue
+        cli = maestro.get(referencia, {})
+        nombre = str(cli.get("NOMBRE", "")).strip() or "Cliente"
+        email = str(cli.get("EMAIL", "")).strip().lower()
+        if not correo_valido(email):
+            sinmail += 1; continue
+        asunto = ("Hoy es la fecha de tu apartado mensual | Bravo"
+                  if dias == 0 else
+                  "Se acerca la fecha de tu apartado mensual | Bravo")
+        listos.append({
+            "ID_ENVIO": ide, "REFERENCIA": referencia, "FECHA": d, "DIAS": dias,
+            "PLANTILLA": plantilla, "NOMBRE": nombre, "EMAIL": email,
+            "ASUNTO": asunto, "CUERPO": html_al_dia(nombre, d, dias)
+        })
 
-            id_envio = (
-                f"ENV-ALDIA-{fecha.strftime('%Y%m%d')}-"
-                f"{referencia}-{plantilla}"
-            )
+    print(f"Candidatos por fecha/status: {len(candidatos)}")
+    print(f"Excluidos: {excl} | Duplicados: {dup} | Sin correo: {sinmail}")
+    print(f"LISTOS PARA ENVIAR: {len(listos)}")
+    if not listos:
+        print("No hay envíos nuevos.")
+        return
 
-            if id_envio in ids_existentes:
-                resumen[plantilla]["duplicados"] += 1
-                continue
+    svc = cliente_gmail()
+    enviados = errores = 0
+    camp = f"ALDIA-AUTO-{hoy.strftime('%Y%m%d')}"
 
-            cliente = maestro.get(referencia, {})
-            email = str(cliente.get("EMAIL", "")).strip().lower()
-            nombre = str(cliente.get("NOMBRE", "")).strip()
-
-            if not correo_valido(email):
-                resumen[plantilla]["sin_correo"] += 1
-                continue
-
-            resumen[plantilla]["listos"].append({
-                "REFERENCIA": referencia,
-                "NOMBRE": nombre or "Cliente",
-                "EMAIL": email,
-                "FECHA": fecha.strftime("%d/%m/%Y"),
-                "ID_ENVIO": id_envio,
-            })
-
-    print(f"Filas revisadas en Unidos_Est: {total_filas}")
-    print(f"Filas con status actual 'Al día': {total_al_dia}")
-    print(f"Filas Al día con fecha inválida/vacía en H: {fechas_invalidas}")
-    print(f"Referencias en Excluir_correo: {len(exclusiones)}")
-    print()
-
-    for plantilla, titulo in (
-        ("ALDIA003", "3 DÍAS ANTES"),
-        ("ALDIA000", "MISMO DÍA"),
-    ):
-        r = resumen[plantilla]
-        print("-" * 72)
-        print(f"{plantilla} - {titulo}")
-        print("-" * 72)
-        print(f"Candidatos por fecha: {r['brutos']}")
-        print(f"Excluidos por Excluir_correo: {r['excluidos']}")
-        print(f"Ya existentes en COLA_ENVIO: {r['duplicados']}")
-        print(f"Sin correo válido: {r['sin_correo']}")
-        print(f"LISTOS PARA ENVIAR: {len(r['listos'])}")
-        print()
-
-        # Por seguridad no imprimimos emails completos en logs.
-        for x in r["listos"][:20]:
-            correo = x["EMAIL"]
-            partes = correo.split("@", 1)
-            correo_mask = (
-                (partes[0][:2] + "***@" + partes[1])
-                if len(partes) == 2 else "***"
-            )
-            print(
-                f"  {x['REFERENCIA']} | {x['FECHA']} | "
-                f"{correo_mask} | {x['NOMBRE']}"
-            )
-
-        if len(r["listos"]) > 20:
-            print(
-                f"  ... y {len(r['listos']) - 20} candidatos adicionales"
-            )
-        print()
-
-    total_listos = (
-        len(resumen["ALDIA003"]["listos"])
-        + len(resumen["ALDIA000"]["listos"])
-    )
+    for item in listos:
+        datos = {
+            "ID_ENVIO": item["ID_ENVIO"], "ID_CAMPAÑA": camp,
+            "REFERENCIA": item["REFERENCIA"], "NOMBRE": item["NOMBRE"],
+            "EMAIL": item["EMAIL"], "PLANTILLA": item["PLANTILLA"],
+            "ASUNTO": item["ASUNTO"], "ESTADO": "ENVIANDO",
+            "FECHA_PROG": ahora.strftime("%d/%m/%Y %H:%M:%S"),
+            "FECHA_ENVIO": "", "INTENTOS": 1, "ERROR": "",
+            "ID_MENSAJE": "", "CUERPO": item["CUERPO"], "ENCARGADO": ""
+        }
+        cola.append_row([datos.get(c, "") for c in cab], value_input_option="USER_ENTERED")
+        fila_sheet = len(cola.get_all_values())
+        try:
+            resp = enviar_gmail(svc, item["EMAIL"], item["ASUNTO"], item["CUERPO"])
+            cola.update_cell(fila_sheet, idx["FECHA_ENVIO"] + 1, datetime.now(TZ).strftime("%d/%m/%Y %H:%M:%S"))
+            cola.update_cell(fila_sheet, idx["ID_MENSAJE"] + 1, str(resp.get("id", "")))
+            cola.update_cell(fila_sheet, idx["ESTADO"] + 1, "ENVIADO")
+            enviados += 1
+            print(f"ENVIADO | {item['PLANTILLA']} | {item['REFERENCIA']} | {item['FECHA'].strftime('%d/%m/%Y')}")
+        except Exception as e:
+            cola.update_cell(fila_sheet, idx["ERROR"] + 1, str(e)[:500])
+            cola.update_cell(fila_sheet, idx["ESTADO"] + 1, "ERROR")
+            errores += 1
+            print(f"ERROR | {item['PLANTILLA']} | {item['REFERENCIA']} | {e}")
 
     print("=" * 72)
-    print(f"TOTAL DE CORREOS QUE SE ENVIARÍAN HOY: {total_listos}")
+    print(f"ENVIADOS: {enviados}")
+    print(f"ERRORES: {errores}")
     print("=" * 72)
-    print("DIAGNÓSTICO FINALIZADO.")
-    print("NINGÚN CORREO FUE ENVIADO.")
-    print("NINGUNA FILA FUE AGREGADA O MODIFICADA.")
 
 
 if __name__ == "__main__":
