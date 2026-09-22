@@ -290,6 +290,10 @@ def procesar_callback_oauth():
         )
         return
 
+# Procesar inmediatamente el callback que Google devuelve en la URL.
+# Sin esta llamada, la función existe pero nunca canjea ?code=... por credenciales.
+procesar_callback_oauth()
+
 # ============================================================
 # GMAIL / ENVÍO CONTROLADO
 # ============================================================
