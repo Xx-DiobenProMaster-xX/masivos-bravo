@@ -33,7 +33,7 @@ import secrets
 _RETRIABLE_HTTP_CODES = {429, 500, 502, 503, 504}
 
 
-def _retry(fn, label="", tries=10, base_sleep=1.5, jitter=0.6, max_sleep=45):
+def _retry(fn, label="", tries=4, base_sleep=0.8, jitter=0.4, max_sleep=6):
     last_err = None
 
     for i in range(tries):
