@@ -228,8 +228,15 @@ def procesar_callback_oauth():
     if not codigo or st.session_state.get("google_oauth_credentials"):
         return
     state_esperado = st.session_state.get("google_oauth_state")
-    if state_esperado and state != state_esperado:
+    # Un redeploy puede conservar ?code=... en la URL aunque la sesión que inició
+    # OAuth ya no exista. En ese caso NO intentamos canjear el código durante el
+    # arranque, porque puede dejar la app esperando una llamada externa.
+    if not state_esperado:
+        st.query_params.clear()
+        return
+    if state != state_esperado:
         st.error("El estado de OAuth no coincide. Intenta conectar nuevamente.")
+        st.query_params.clear()
         return
     try:
         flujo = crear_flujo_oauth(state=state)
@@ -4598,43 +4605,6 @@ elif menu == "🏦 Pagos a Banco":
     # MÉTRICAS
     # --------------------------------------------------------
 
-    cred_respuestas = credenciales_gmail_sesion()
-    col_sync, col_estado_sync = st.columns([1, 3])
-
-    with col_sync:
-        if st.button(
-            "🔄 Sincronizar Gmail",
-            key="sincronizar_respuestas_gmail",
-            use_container_width=True,
-            type="primary"
-        ):
-            if cred_respuestas is None:
-                st.error("Conecta Gmail desde ⚙️ Configuración primero.")
-            else:
-                try:
-                    with st.spinner("Buscando respuestas nuevas en Gmail..."):
-                        resultado_sync = sincronizar_respuestas_gmail(cred_respuestas)
-                    st.success(
-                        f"✅ {resultado_sync['nuevas']} respuesta(s) nueva(s). "
-                        f"Revisadas: {resultado_sync['revisadas']} · "
-                        f"Sin relación: {resultado_sync['sin_relacion']}."
-                    )
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"No pude sincronizar Gmail: {e}")
-
-    with col_estado_sync:
-        if cred_respuestas is None:
-            st.caption(
-                "Gmail no está conectado. Ve a ⚙️ Configuración y vuelve a conectar "
-                "Google para habilitar lectura de respuestas."
-            )
-        else:
-            st.caption(
-                "Busca respuestas dirigidas a estructurados@gobravo.com.co, "
-                "evita duplicados y las registra directamente en RESPUESTAS."
-            )
-
     m1, m2, m3, m4 = st.columns(
         4
     )
@@ -5451,6 +5421,43 @@ elif menu == "💬 Respuestas":
         '</div>',
         unsafe_allow_html=True
     )
+
+    cred_respuestas = credenciales_gmail_sesion()
+    col_sync, col_estado_sync = st.columns([1, 3])
+
+    with col_sync:
+        if st.button(
+            "🔄 Sincronizar Gmail",
+            key="sincronizar_respuestas_gmail",
+            use_container_width=True,
+            type="primary"
+        ):
+            if cred_respuestas is None:
+                st.error("Conecta Gmail desde ⚙️ Configuración primero.")
+            else:
+                try:
+                    with st.spinner("Buscando respuestas nuevas en Gmail..."):
+                        resultado_sync = sincronizar_respuestas_gmail(cred_respuestas)
+                    st.success(
+                        f"✅ {resultado_sync['nuevas']} respuesta(s) nueva(s). "
+                        f"Revisadas: {resultado_sync['revisadas']} · "
+                        f"Sin relación: {resultado_sync['sin_relacion']}."
+                    )
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"No pude sincronizar Gmail: {e}")
+
+    with col_estado_sync:
+        if cred_respuestas is None:
+            st.caption(
+                "Gmail no está conectado. Ve a ⚙️ Configuración y vuelve a conectar "
+                "Google para habilitar lectura de respuestas."
+            )
+        else:
+            st.caption(
+                "Busca respuestas dirigidas a estructurados@gobravo.com.co, "
+                "evita duplicados y las registra directamente en RESPUESTAS."
+            )
 
     m1, m2, m3, m4 = st.columns(
         4
