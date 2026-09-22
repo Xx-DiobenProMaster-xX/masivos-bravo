@@ -19,6 +19,9 @@ import unicodedata
 import re
 import base64
 from email.message import EmailMessage
+from email import policy
+from email.parser import BytesParser
+from email.utils import parseaddr
 import secrets
 
 
@@ -174,6 +177,7 @@ GOOGLE_OAUTH_SCOPES = [
     "https://www.googleapis.com/auth/userinfo.email",
     "https://www.googleapis.com/auth/userinfo.profile",
     "https://www.googleapis.com/auth/gmail.send",
+    "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/drive.file",
 ]
 
@@ -388,6 +392,286 @@ def enviar_mensaje_gmail(credenciales, destinatario, asunto, cuerpo_html):
     servicio = build("gmail", "v1", credentials=credenciales, cache_discovery=False)
     body = construir_mensaje_gmail(destinatario, asunto, cuerpo_html)
     return servicio.users().messages().send(userId="me", body=body).execute()
+
+
+def _email_normalizado(valor):
+    """Extrae y normaliza una dirección tipo 'Nombre <correo@dominio.com>'."""
+    return parseaddr(str(valor or ""))[1].strip().lower()
+
+
+def _fecha_sheet_a_dt(valor):
+    """Convierte fechas de COLA_ENVIO a datetime con zona Bogotá."""
+    if valor is None or str(valor).strip() == "":
+        return None
+    if isinstance(valor, datetime):
+        dt = valor
+    else:
+        dt = None
+        texto = str(valor).strip()
+        for formato in (
+            "%d/%m/%Y %H:%M:%S",
+            "%d/%m/%Y %H:%M",
+            "%Y-%m-%d %H:%M:%S",
+            "%Y-%m-%d %H:%M",
+            "%Y-%m-%dT%H:%M:%S",
+            "%Y-%m-%dT%H:%M",
+        ):
+            try:
+                dt = datetime.strptime(texto, formato)
+                break
+            except Exception:
+                pass
+        if dt is None:
+            try:
+                dt = pd.to_datetime(texto, dayfirst=True, errors="raise").to_pydatetime()
+            except Exception:
+                return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=TZ)
+    return dt.astimezone(TZ)
+
+
+def _texto_mensaje_email(msg):
+    """Devuelve solo el contenido textual útil del correo recibido."""
+    partes = []
+    if msg.is_multipart():
+        for parte in msg.walk():
+            tipo = parte.get_content_type()
+            disp = str(parte.get("Content-Disposition", "") or "").lower()
+            if tipo != "text/plain" or "attachment" in disp:
+                continue
+            try:
+                contenido = parte.get_content()
+            except Exception:
+                payload = parte.get_payload(decode=True) or b""
+                contenido = payload.decode(parte.get_content_charset() or "utf-8", errors="replace")
+            if contenido:
+                partes.append(str(contenido))
+    else:
+        try:
+            partes.append(str(msg.get_content()))
+        except Exception:
+            payload = msg.get_payload(decode=True) or b""
+            partes.append(payload.decode(msg.get_content_charset() or "utf-8", errors="replace"))
+
+    texto = "\n".join(partes).replace("\r\n", "\n").replace("\r", "\n").strip()
+
+    # Quitar, cuando sea posible, la conversación citada del correo anterior.
+    cortes = [
+        r"\nOn .+ wrote:\s*$",
+        r"\nEl .+ escribió:\s*$",
+        r"\nDe:\s*.+\nEnviado:",
+        r"\nFrom:\s*.+\nSent:",
+        r"\n-{2,}\s*Original Message\s*-{2,}",
+        r"\n-{2,}\s*Mensaje original\s*-{2,}",
+    ]
+    posiciones = []
+    for patron in cortes:
+        m = re.search(patron, texto, flags=re.I | re.M)
+        if m:
+            posiciones.append(m.start())
+    if posiciones:
+        texto = texto[:min(posiciones)].strip()
+
+    # Evitar respuestas gigantes por firmas/hilos completos.
+    return texto[:12000].strip()
+
+
+def _asegurar_columnas_respuestas(hoja):
+    """Mantiene RESPUESTAS compatible con la interfaz actual A:Q."""
+    encabezados = [
+        "ID_RESPUESTA", "FECHA_RESPUESTA", "EMAIL_CLIENTE", "NOMBRE_CLIENTE",
+        "REFERENCIA", "ID_CAMPAÑA", "ID_ENVIO", "PLANTILLA", "ASUNTO",
+        "RESPUESTA", "ENCARGADO", "GMAIL_MESSAGE_ID", "ESTADO",
+        "NOTIFICACION_ENCARGADO", "CHEK", "COMENTARIOS", "ALERTA_NO_RESPONDIDO"
+    ]
+    actuales = hoja.row_values(1)
+    if not actuales:
+        hoja.update("A1:Q1", [encabezados])
+        return encabezados
+
+    # Solo completar encabezados faltantes al final; no mover columnas existentes.
+    for i, nombre in enumerate(encabezados, start=1):
+        actual = str(actuales[i - 1]).strip() if len(actuales) >= i else ""
+        if not actual:
+            hoja.update_cell(1, i, nombre)
+    return encabezados
+
+
+def sincronizar_respuestas_gmail(credenciales, dias=30, max_mensajes=500):
+    """
+    Lee respuestas dirigidas a estructurados@gobravo.com.co y las agrega a
+    RESPUESTAS. Relaciona por email del cliente con el envío ENVIADO más
+    reciente ocurrido antes de la respuesta. Deduplica por GMAIL_MESSAGE_ID.
+    """
+    if credenciales is None:
+        raise ValueError("Gmail no está conectado.")
+
+    servicio = build("gmail", "v1", credentials=credenciales, cache_discovery=False)
+    archivo = obtener_archivo()
+    hoja_cola = archivo.worksheet("COLA_ENVIO")
+    hoja_resp = archivo.worksheet("RESPUESTAS")
+    _asegurar_columnas_respuestas(hoja_resp)
+
+    cola_vals = hoja_cola.get_all_values()
+    if len(cola_vals) <= 1:
+        return {"nuevas": 0, "revisadas": 0, "sin_relacion": 0, "duplicadas": 0}
+
+    cab = [str(x).strip() for x in cola_vals[0]]
+    necesarias = [
+        "ID_ENVIO", "ID_CAMPAÑA", "REFERENCIA", "NOMBRE", "EMAIL",
+        "PLANTILLA", "ASUNTO", "ESTADO", "FECHA_ENVIO", "ENCARGADO"
+    ]
+    faltan = [c for c in necesarias if c not in cab]
+    if faltan:
+        raise ValueError("Faltan columnas en COLA_ENVIO: " + ", ".join(faltan))
+    idx = {c: cab.index(c) for c in necesarias}
+
+    por_email = {}
+    for fila in cola_vals[1:]:
+        def v(col):
+            i = idx[col]
+            return fila[i] if len(fila) > i else ""
+
+        if str(v("ESTADO")).strip().upper() != "ENVIADO":
+            continue
+        email = _email_normalizado(v("EMAIL"))
+        if not email:
+            continue
+        fecha_envio = _fecha_sheet_a_dt(v("FECHA_ENVIO"))
+        por_email.setdefault(email, []).append({
+            "ID_ENVIO": str(v("ID_ENVIO")).strip(),
+            "ID_CAMPAÑA": str(v("ID_CAMPAÑA")).strip(),
+            "REFERENCIA": str(v("REFERENCIA")).strip(),
+            "NOMBRE": str(v("NOMBRE")).strip(),
+            "EMAIL": email,
+            "PLANTILLA": str(v("PLANTILLA")).strip(),
+            "ASUNTO": str(v("ASUNTO")).strip(),
+            "ENCARGADO": str(v("ENCARGADO")).strip(),
+            "FECHA_ENVIO": fecha_envio,
+        })
+
+    for lista in por_email.values():
+        lista.sort(
+            key=lambda x: x["FECHA_ENVIO"] or datetime.min.replace(tzinfo=TZ),
+            reverse=True
+        )
+
+    resp_vals = hoja_resp.get_all_values()
+    ids_existentes = set()
+    if resp_vals:
+        cab_r = [str(x).strip() for x in resp_vals[0]]
+        if "GMAIL_MESSAGE_ID" in cab_r:
+            j = cab_r.index("GMAIL_MESSAGE_ID")
+            ids_existentes = {
+                str(f[j]).strip()
+                for f in resp_vals[1:]
+                if len(f) > j and str(f[j]).strip()
+            }
+
+    # Solo mensajes que llegaron al buzón de Estructurados.
+    query = f"to:{GMAIL_REPLY_TO} newer_than:{int(dias)}d"
+    ids_gmail = []
+    token = None
+    while len(ids_gmail) < int(max_mensajes):
+        kwargs = {
+            "userId": "me",
+            "q": query,
+            "maxResults": min(100, int(max_mensajes) - len(ids_gmail)),
+        }
+        if token:
+            kwargs["pageToken"] = token
+        pagina = servicio.users().messages().list(**kwargs).execute()
+        ids_gmail.extend([x.get("id") for x in pagina.get("messages", []) if x.get("id")])
+        token = pagina.get("nextPageToken")
+        if not token:
+            break
+
+    nuevas_filas = []
+    revisadas = 0
+    duplicadas = 0
+    sin_relacion = 0
+
+    for gmail_id in ids_gmail:
+        revisadas += 1
+        if gmail_id in ids_existentes:
+            duplicadas += 1
+            continue
+
+        dato = servicio.users().messages().get(
+            userId="me", id=gmail_id, format="raw"
+        ).execute()
+        raw = dato.get("raw", "")
+        if not raw:
+            continue
+
+        raw += "=" * (-len(raw) % 4)
+        msg = BytesParser(policy=policy.default).parsebytes(
+            base64.urlsafe_b64decode(raw.encode("utf-8"))
+        )
+
+        email_cliente = _email_normalizado(msg.get("From", ""))
+        if not email_cliente or email_cliente == GMAIL_REPLY_TO.lower():
+            continue
+
+        candidatos = por_email.get(email_cliente, [])
+        if not candidatos:
+            sin_relacion += 1
+            continue
+
+        try:
+            fecha_respuesta = datetime.fromtimestamp(
+                int(dato.get("internalDate", "0")) / 1000,
+                tz=ZoneInfo("UTC")
+            ).astimezone(TZ)
+        except Exception:
+            fecha_respuesta = datetime.now(TZ)
+
+        envio = None
+        for candidato in candidatos:
+            fenv = candidato["FECHA_ENVIO"]
+            if fenv is None or fenv <= fecha_respuesta:
+                envio = candidato
+                break
+        if envio is None:
+            sin_relacion += 1
+            continue
+
+        respuesta = _texto_mensaje_email(msg)
+        if not respuesta:
+            continue
+
+        nuevas_filas.append([
+            "RSP-" + secrets.token_hex(6).upper(),
+            fecha_respuesta.strftime("%d/%m/%Y %H:%M:%S"),
+            email_cliente,
+            envio["NOMBRE"],
+            envio["REFERENCIA"],
+            envio["ID_CAMPAÑA"],
+            envio["ID_ENVIO"],
+            envio["PLANTILLA"],
+            str(msg.get("Subject", "") or "").strip(),
+            respuesta,
+            envio["ENCARGADO"],
+            gmail_id,
+            "NUEVA",
+            "PENDIENTE",
+            "FALSE",
+            "",
+            "",
+        ])
+        ids_existentes.add(gmail_id)
+
+    if nuevas_filas:
+        hoja_resp.append_rows(nuevas_filas, value_input_option="USER_ENTERED")
+        st.cache_data.clear()
+
+    return {
+        "nuevas": len(nuevas_filas),
+        "revisadas": revisadas,
+        "sin_relacion": sin_relacion,
+        "duplicadas": duplicadas,
+    }
 
 
 def _parse_fecha_programada(valor):
@@ -4314,6 +4598,43 @@ elif menu == "🏦 Pagos a Banco":
     # MÉTRICAS
     # --------------------------------------------------------
 
+    cred_respuestas = credenciales_gmail_sesion()
+    col_sync, col_estado_sync = st.columns([1, 3])
+
+    with col_sync:
+        if st.button(
+            "🔄 Sincronizar Gmail",
+            key="sincronizar_respuestas_gmail",
+            use_container_width=True,
+            type="primary"
+        ):
+            if cred_respuestas is None:
+                st.error("Conecta Gmail desde ⚙️ Configuración primero.")
+            else:
+                try:
+                    with st.spinner("Buscando respuestas nuevas en Gmail..."):
+                        resultado_sync = sincronizar_respuestas_gmail(cred_respuestas)
+                    st.success(
+                        f"✅ {resultado_sync['nuevas']} respuesta(s) nueva(s). "
+                        f"Revisadas: {resultado_sync['revisadas']} · "
+                        f"Sin relación: {resultado_sync['sin_relacion']}."
+                    )
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"No pude sincronizar Gmail: {e}")
+
+    with col_estado_sync:
+        if cred_respuestas is None:
+            st.caption(
+                "Gmail no está conectado. Ve a ⚙️ Configuración y vuelve a conectar "
+                "Google para habilitar lectura de respuestas."
+            )
+        else:
+            st.caption(
+                "Busca respuestas dirigidas a estructurados@gobravo.com.co, "
+                "evita duplicados y las registra directamente en RESPUESTAS."
+            )
+
     m1, m2, m3, m4 = st.columns(
         4
     )
@@ -6775,12 +7096,12 @@ elif menu == "⚙️ Configuración":
             "✅ Gmail conectado" + (f" como {email_oauth}" if email_oauth else "")
         )
         st.info(
-            "La conexión usa el permiso mínimo gmail.send. "
-            "Todavía no se enviará ningún correo automáticamente desde esta pantalla."
+            "La conexión permite enviar correos y leer Gmail para sincronizar respuestas. "
+            "La lectura se usa únicamente para registrar respuestas relacionadas con COLA_ENVIO."
         )
         try:
             build("gmail", "v1", credentials=cred_gmail, cache_discovery=False)
-            st.success("✅ Credenciales de Gmail listas para enviar mediante Gmail API")
+            st.success("✅ Gmail API lista para enviar y sincronizar respuestas")
         except Exception as e:
             st.error(f"No pude inicializar Gmail API: {e}")
 
