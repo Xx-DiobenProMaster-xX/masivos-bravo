@@ -128,6 +128,39 @@ def main():
     excluir = exclusiones(gc)
     existentes = ids_existentes(gc)
 
+    print()
+    print("=" * 76)
+    print("MUESTRA RAW DE GOOGLE SHEETS - COLUMNAS C / H / P")
+    print("=" * 76)
+
+    muestras = 0
+    for numero_fila, f in enumerate(filas[1:], start=2):
+        raw_c = f[2] if len(f) > 2 else ""
+        raw_h = f[7] if len(f) > 7 else ""
+        raw_p = f[15] if len(f) > 15 else ""
+
+        # Mostrar primero filas que tengan contenido en C/H.
+        if not str(raw_c).strip() and not str(raw_h).strip():
+            continue
+
+        fecha_parseada = parse_fecha(raw_c)
+        ref_parseada = norm_ref(raw_h)
+        p_parseado = es_true(raw_p)
+
+        print(
+            f"Fila {numero_fila} | "
+            f"C RAW={raw_c!r} -> FECHA={fecha_parseada!r} | "
+            f"H RAW={raw_h!r} -> REF={ref_parseada!r} | "
+            f"P RAW={raw_p!r} -> TRUE={p_parseado}"
+        )
+
+        muestras += 1
+        if muestras >= 20:
+            break
+
+    print("=" * 76)
+    print()
+
     # Una referencia puede aparecer varias veces.
     # Consolidamos por referencia + fecha de liquidación.
     # Si al menos una fila de ese evento tiene P=TRUE,
