@@ -1,130 +1,343 @@
-
-import os, re, json, base64, html
+import os
+import re
+import json
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from email.message import EmailMessage
+
 import gspread
-from google.oauth2.service_account import Credentials as SACredentials
-from google.oauth2.credentials import Credentials as OAuthCredentials
-from google.auth.transport.requests import Request
-from googleapiclient.discovery import build
+from google.oauth2.service_account import Credentials as ServiceAccountCredentials
 
-TZ=ZoneInfo("America/Bogota")
-MASIVOS="1VGdEUGRDFxBjKRLF1KF7EcHIBf3f8ujtN3iPm6TatjI"
-FUENTE="15sbBsZcMj8PMkHXByLqjcuqtvsY_2FGYiwhkKPmfIYM"
-CARTERA="13Vf32LzRI2V95dIUqfevzm-ZmsDR3d17UTre_7XJ-UU"
-FROM="estructurados@gobravo.com.co"
-LOGO="https://drive.google.com/uc?export=view&id=13kK3v4FiyXFa4UzM_au3TllhOhwjvWb7"
-WA="573012411885"
 
-def norm(x):
+# ============================================================
+# MODO DIAGNÓSTICO - NO ENVÍA NI MODIFICA NADA
+# ============================================================
+
+TZ = ZoneInfo("America/Bogota")
+
+MASIVOS_SPREADSHEET_ID = "1VGdEUGRDFxBjKRLF1KF7EcHIBf3f8ujtN3iPm6TatjI"
+UNIDOS_EST_SPREADSHEET_ID = "15sbBsZcMj8PMkHXByLqjcuqtvsY_2FGYiwhkKPmfIYM"
+HOJA_UNIDOS_EST = "Unidos_Est"
+HOJA_EXCLUIR = "Excluir_correo"
+
+CARTERA_SPREADSHEET_ID = "13Vf32LzRI2V95dIUqfevzm-ZmsDR3d17UTre_7XJ-UU"
+HOJA_CARTERA = "2. Cartera Berex"
+
+SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive",
+]
+
+
+def normalizar(texto):
     import unicodedata
-    t=unicodedata.normalize("NFD",str(x or "").strip())
-    return "".join(c for c in t if unicodedata.category(c)!="Mn").upper()
+    t = unicodedata.normalize("NFD", str(texto or "").strip())
+    return "".join(c for c in t if unicodedata.category(c) != "Mn").upper()
 
-def ref(x):
-    t=str(x or "").strip().replace(" ","").replace("\xa0","")
-    if re.fullmatch(r"\d+\.0+",t): t=t.split(".")[0]
-    if re.fullmatch(r"\d{1,3}([.,]\d{3})+",t): t=re.sub(r"[.,]","",t)
-    return re.sub(r"\D","",t)
 
-def fecha(x):
-    for f in ("%d/%m/%Y","%Y-%m-%d","%d/%m/%Y %H:%M:%S"):
-        try:return datetime.strptime(str(x).strip(),f).date()
-        except:pass
+def normalizar_referencia(valor):
+    if valor is None:
+        return ""
+    texto = str(valor).strip().replace("\xa0", "").replace(" ", "")
+    if not texto or texto.upper() in {"NAN", "NONE", "NULL"}:
+        return ""
+    if re.fullmatch(r"[+-]?\d+\.0+", texto):
+        return texto.split(".")[0].lstrip("+")
+    if re.fullmatch(r"[+-]?\d{1,3}([.,]\d{3})+", texto):
+        return re.sub(r"[.,]", "", texto).lstrip("+")
+    if re.fullmatch(r"[+-]?\d+", texto):
+        return texto.lstrip("+")
+    try:
+        numero = float(texto.replace(",", ""))
+        if numero.is_integer():
+            return str(int(numero))
+    except Exception:
+        pass
+    return re.sub(r"\D", "", texto)
+
+
+def parsear_fecha(valor):
+    texto = str(valor or "").strip()
+    if not texto:
+        return None
+    formatos = (
+        "%d/%m/%Y",
+        "%Y-%m-%d",
+        "%d/%m/%Y %H:%M:%S",
+        "%Y-%m-%d %H:%M:%S",
+        "%d-%m-%Y",
+    )
+    for formato in formatos:
+        try:
+            return datetime.strptime(texto, formato).date()
+        except Exception:
+            pass
     return None
 
-def fecha_larga(d):
-    m=["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"]
-    return f"{d.day} de {m[d.month-1]} de {d.year}"
 
-def html_mail(nombre,d,dias):
-    nombre=html.escape(nombre or "Cliente"); ft=fecha_larga(d)
-    if dias==0:
-        intro="Te recordamos que hoy es la fecha de tu apartado mensual en Bravo."
-        destacado="Hoy es la fecha de tu apartado mensual"; fondo="#e9f7ff"; acento="#147fd1"
-    else:
-        intro="Queremos recordarte que se acerca la fecha de tu apartado mensual en Bravo."
-        destacado="Faltan 3 días para la fecha de tu apartado mensual"; fondo="#f1edff"; acento="#5b45c6"
-    return f'''<!doctype html><html><body style="margin:0;background:#f4f5f9;font-family:Arial;color:#525b82">
-<table width="100%"><tr><td align="center"><table width="700" style="max-width:700px;background:#fff;border-top:6px solid #38278f">
-<tr><td style="padding:28px 48px"><img src="{LOGO}" width="170"></td></tr>
-<tr><td style="padding:5px 48px;font-size:30px;font-weight:800;color:#11183f">Hola, <span style="color:#35238f">{nombre}</span> 👋</td></tr>
-<tr><td style="padding:12px 48px 24px;font-size:18px;line-height:28px">{intro}</td></tr>
-<tr><td style="padding:0 48px 24px"><table width="100%" style="background:{fondo};border-radius:18px"><tr>
-<td style="padding:28px;font-size:55px">📅</td><td style="padding:28px 28px 28px 0">
-<div style="font-size:14px;font-weight:800;color:{acento};text-transform:uppercase">Fecha de tu apartado mensual</div>
-<div style="font-size:29px;font-weight:800;color:#11183f;margin-top:6px">{ft}</div>
-<div style="background:#fff;border-radius:12px;padding:13px 16px;margin-top:18px;font-size:18px;font-weight:800;color:{acento}">{destacado}</div>
-</td></tr></table></td></tr>
-<tr><td style="padding:0 48px 20px;font-size:17px;line-height:27px">Tener presente la fecha de tu apartado mensual te ayuda a mantener tu programa al día y continuar avanzando en tu proceso.</td></tr>
-<tr><td style="padding:0 48px 28px"><a href="https://wa.me/{WA}" style="display:block;background:#12bd70;color:white;text-align:center;padding:18px;border-radius:14px;text-decoration:none;font-size:19px;font-weight:800">Hablar con Bravo por WhatsApp</a></td></tr>
-<tr><td align="center" style="padding:22px;border-top:1px solid #ddd"><b>¡Gracias por ser parte de Bravo!</b><br>Equipo Bravo</td></tr>
-</table></td></tr></table></body></html>'''
+def correo_valido(valor):
+    correo = str(valor or "").strip().lower()
+    return bool(re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", correo))
 
-def sheets():
-    info=json.loads(os.environ["MI_JSON"])
-    c=SACredentials.from_service_account_info(info,scopes=["https://www.googleapis.com/auth/spreadsheets","https://www.googleapis.com/auth/drive"])
-    return gspread.authorize(c)
 
-def gmail():
-    c=OAuthCredentials(token=None,refresh_token=os.environ["GOOGLE_REFRESH_TOKEN"],token_uri="https://oauth2.googleapis.com/token",client_id=os.environ["GOOGLE_CLIENT_ID"],client_secret=os.environ["GOOGLE_CLIENT_SECRET"],scopes=["https://www.googleapis.com/auth/gmail.send"])
-    c.refresh(Request()); return build("gmail","v1",credentials=c,cache_discovery=False)
+def cliente_sheets():
+    if not os.environ.get("MI_JSON"):
+        raise RuntimeError("No encontré el Secret MI_JSON.")
+    info = json.loads(os.environ["MI_JSON"])
+    credenciales = ServiceAccountCredentials.from_service_account_info(
+        info,
+        scopes=SCOPES,
+    )
+    return gspread.authorize(credenciales)
 
-def enviar(svc,to,subject,body):
-    m=EmailMessage(); m["To"]=to; m["From"]=f"Bravo S.A.S. <{FROM}>"; m["Reply-To"]=FROM; m["Subject"]=subject
-    m.set_content("Recordatorio de tu apartado mensual en Bravo."); m.add_alternative(body,subtype="html")
-    raw=base64.urlsafe_b64encode(m.as_bytes()).decode()
-    return svc.users().messages().send(userId="me",body={"raw":raw}).execute()
+
+def cargar_maestro_clientes(gc):
+    valores = (
+        gc.open_by_key(CARTERA_SPREADSHEET_ID)
+        .worksheet(HOJA_CARTERA)
+        .get("B:G")
+    )
+    if len(valores) <= 1:
+        return {}
+
+    encabezados = [str(x).strip() for x in valores[0]]
+    pos = {c: i for i, c in enumerate(encabezados)}
+
+    requeridas = {"Nombre_Cliente", "Email"}
+    faltan = requeridas - set(encabezados)
+    if faltan:
+        raise RuntimeError(
+            "Faltan columnas en 2. Cartera Berex: " + ", ".join(sorted(faltan))
+        )
+
+    llaves = [
+        c for c in ("Referencia", "Referencia_Berex", "Numero")
+        if c in pos
+    ]
+    maestro = {}
+
+    for fila in valores[1:]:
+        def valor(col):
+            i = pos[col]
+            return fila[i] if len(fila) > i else ""
+
+        nombre = str(valor("Nombre_Cliente")).strip()
+        email = str(valor("Email")).strip().lower()
+
+        for columna in llaves:
+            referencia = normalizar_referencia(valor(columna))
+            if not referencia:
+                continue
+
+            actual = maestro.get(
+                referencia,
+                {"NOMBRE": "", "EMAIL": ""}
+            )
+            if nombre:
+                actual["NOMBRE"] = nombre
+            if email:
+                actual["EMAIL"] = email
+            maestro[referencia] = actual
+
+    return maestro
+
+
+def cargar_ids_existentes(gc):
+    valores = (
+        gc.open_by_key(MASIVOS_SPREADSHEET_ID)
+        .worksheet("COLA_ENVIO")
+        .get_all_values()
+    )
+    if len(valores) <= 1:
+        return set()
+
+    encabezados = [str(x).strip() for x in valores[0]]
+    if "ID_ENVIO" not in encabezados:
+        raise RuntimeError("COLA_ENVIO no tiene la columna ID_ENVIO.")
+
+    i_id = encabezados.index("ID_ENVIO")
+    return {
+        str(fila[i_id]).strip()
+        for fila in valores[1:]
+        if len(fila) > i_id and str(fila[i_id]).strip()
+    }
+
 
 def main():
-    gc=sheets(); hoy=datetime.now(TZ).date(); ahora=datetime.now(TZ)
-    fuente=gc.open_by_key(FUENTE)
-    unidos=fuente.worksheet("Unidos_Est").get("A:I")
-    excl={ref(x) for x in fuente.worksheet("Excluir_correo").col_values(1)[1:] if ref(x)}
+    ahora = datetime.now(TZ)
+    hoy = ahora.date()
 
-    car=gc.open_by_key(CARTERA).worksheet("2. Cartera Berex").get("B:G")
-    hc=[str(x).strip() for x in car[0]]; pc={c:i for i,c in enumerate(hc)}
-    maestro={}
-    for f in car[1:]:
-        def v(c): return f[pc[c]] if c in pc and len(f)>pc[c] else ""
-        for c in ("Referencia","Referencia_Berex","Numero"):
-            r=ref(v(c))
-            if r:
-                maestro[r]={"NOMBRE":str(v("Nombre_Cliente")).strip(),"EMAIL":str(v("Email")).strip()}
+    print("=" * 72)
+    print("DIAGNÓSTICO - RECORDATORIOS DE APARTADO MENSUAL")
+    print("=" * 72)
+    print(f"Fecha/hora Colombia: {ahora.strftime('%d/%m/%Y %H:%M:%S')}")
+    print("MODO DIAGNÓSTICO: NINGÚN CORREO SERÁ ENVIADO")
+    print("MODO DIAGNÓSTICO: NO SE MODIFICARÁ NINGÚN GOOGLE SHEET")
+    print()
 
-    libro=gc.open_by_key(MASIVOS); cola=libro.worksheet("COLA_ENVIO"); vals=cola.get_all_values()
-    cab=[str(x).strip() for x in vals[0]]; ix={c:i for i,c in enumerate(cab)}
-    existentes={str(f[ix["ID_ENVIO"]]).strip() for f in vals[1:] if len(f)>ix["ID_ENVIO"]}
-    svc=gmail(); enviados=0; omitidos=0
+    gc = cliente_sheets()
 
-    for f in unidos[1:]:
-        r=ref(f[0] if len(f)>0 else ""); status=str(f[2] if len(f)>2 else "").strip(); d=fecha(f[7] if len(f)>7 else "")
-        if not r or norm(status)!="AL DIA" or not d: continue
-        dias=(d-hoy).days
-        if dias not in (0,3): continue
-        plantilla="ALDIA000" if dias==0 else "ALDIA003"
-        ide=f"ENV-ALDIA-{d.strftime('%Y%m%d')}-{r}-{plantilla}"
-        if r in excl or ide in existentes: omitidos+=1; continue
-        cli=maestro.get(r,{})
-        correo=str(cli.get("EMAIL","")).strip()
-        if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+",correo): omitidos+=1; continue
-        nombre=str(cli.get("NOMBRE","")).strip() or "Cliente"
-        asunto="Hoy es la fecha de tu apartado mensual | Bravo" if dias==0 else "Se acerca la fecha de tu apartado mensual | Bravo"
-        cuerpo=html_mail(nombre,d,dias)
-        camp=f"ALDIA-AUTO-{hoy.strftime('%Y%m%d')}"
-        datos={"ID_ENVIO":ide,"ID_CAMPAÑA":camp,"REFERENCIA":r,"NOMBRE":nombre,"EMAIL":correo,"PLANTILLA":plantilla,"ASUNTO":asunto,"ESTADO":"ENVIANDO","FECHA_PROG":ahora.strftime("%d/%m/%Y %H:%M"),"FECHA_ENVIO":"","INTENTOS":1,"ERROR":"","ID_MENSAJE":"","CUERPO":cuerpo,"ENCARGADO":""}
-        fila=[datos.get(c,"") for c in cab]; cola.append_row(fila,value_input_option="USER_ENTERED")
-        n=len(cola.get_all_values())
-        try:
-            resp=enviar(svc,correo,asunto,cuerpo)
-            cola.update_cell(n,ix["FECHA_ENVIO"]+1,datetime.now(TZ).strftime("%d/%m/%Y %H:%M:%S"))
-            cola.update_cell(n,ix["ID_MENSAJE"]+1,str(resp.get("id","")))
-            cola.update_cell(n,ix["ESTADO"]+1,"ENVIADO"); enviados+=1
-            print("ENVIADO",plantilla,r,correo)
-        except Exception as e:
-            cola.update_cell(n,ix["ERROR"]+1,str(e)[:500]); cola.update_cell(n,ix["ESTADO"]+1,"ERROR")
-            print("ERROR",r,e)
-    print(f"FIN enviados={enviados} omitidos={omitidos}")
+    fuente = gc.open_by_key(UNIDOS_EST_SPREADSHEET_ID)
+    unidos = fuente.worksheet(HOJA_UNIDOS_EST).get("A:I")
+    excluidos_raw = fuente.worksheet(HOJA_EXCLUIR).col_values(1)
 
-if __name__=="__main__": main()
+    exclusiones = {
+        normalizar_referencia(x)
+        for x in excluidos_raw[1:]
+        if normalizar_referencia(x)
+    }
+
+    maestro = cargar_maestro_clientes(gc)
+    ids_existentes = cargar_ids_existentes(gc)
+
+    total_filas = 0
+    total_al_dia = 0
+    fechas_invalidas = 0
+
+    candidatos_3 = {}
+    candidatos_0 = {}
+
+    for fila in unidos[1:]:
+        total_filas += 1
+
+        referencia = normalizar_referencia(
+            fila[0] if len(fila) > 0 else ""
+        )
+        status = str(
+            fila[2] if len(fila) > 2 else ""
+        ).strip()
+        fecha = parsear_fecha(
+            fila[7] if len(fila) > 7 else ""
+        )
+
+        if not referencia or normalizar(status) != "AL DIA":
+            continue
+
+        total_al_dia += 1
+
+        if not fecha:
+            fechas_invalidas += 1
+            continue
+
+        dias = (fecha - hoy).days
+        registro = {
+            "REFERENCIA": referencia,
+            "FECHA": fecha,
+            "DIAS": dias,
+        }
+
+        # Deduplicar por referencia + fecha.
+        llave = (referencia, fecha.isoformat())
+        if dias == 3:
+            candidatos_3[llave] = registro
+        elif dias == 0:
+            candidatos_0[llave] = registro
+
+    resumen = {
+        "ALDIA003": {
+            "brutos": len(candidatos_3),
+            "excluidos": 0,
+            "duplicados": 0,
+            "sin_correo": 0,
+            "listos": [],
+        },
+        "ALDIA000": {
+            "brutos": len(candidatos_0),
+            "excluidos": 0,
+            "duplicados": 0,
+            "sin_correo": 0,
+            "listos": [],
+        },
+    }
+
+    for plantilla, candidatos in (
+        ("ALDIA003", candidatos_3),
+        ("ALDIA000", candidatos_0),
+    ):
+        for registro in candidatos.values():
+            referencia = registro["REFERENCIA"]
+            fecha = registro["FECHA"]
+
+            if referencia in exclusiones:
+                resumen[plantilla]["excluidos"] += 1
+                continue
+
+            id_envio = (
+                f"ENV-ALDIA-{fecha.strftime('%Y%m%d')}-"
+                f"{referencia}-{plantilla}"
+            )
+
+            if id_envio in ids_existentes:
+                resumen[plantilla]["duplicados"] += 1
+                continue
+
+            cliente = maestro.get(referencia, {})
+            email = str(cliente.get("EMAIL", "")).strip().lower()
+            nombre = str(cliente.get("NOMBRE", "")).strip()
+
+            if not correo_valido(email):
+                resumen[plantilla]["sin_correo"] += 1
+                continue
+
+            resumen[plantilla]["listos"].append({
+                "REFERENCIA": referencia,
+                "NOMBRE": nombre or "Cliente",
+                "EMAIL": email,
+                "FECHA": fecha.strftime("%d/%m/%Y"),
+                "ID_ENVIO": id_envio,
+            })
+
+    print(f"Filas revisadas en Unidos_Est: {total_filas}")
+    print(f"Filas con status actual 'Al día': {total_al_dia}")
+    print(f"Filas Al día con fecha inválida/vacía en H: {fechas_invalidas}")
+    print(f"Referencias en Excluir_correo: {len(exclusiones)}")
+    print()
+
+    for plantilla, titulo in (
+        ("ALDIA003", "3 DÍAS ANTES"),
+        ("ALDIA000", "MISMO DÍA"),
+    ):
+        r = resumen[plantilla]
+        print("-" * 72)
+        print(f"{plantilla} - {titulo}")
+        print("-" * 72)
+        print(f"Candidatos por fecha: {r['brutos']}")
+        print(f"Excluidos por Excluir_correo: {r['excluidos']}")
+        print(f"Ya existentes en COLA_ENVIO: {r['duplicados']}")
+        print(f"Sin correo válido: {r['sin_correo']}")
+        print(f"LISTOS PARA ENVIAR: {len(r['listos'])}")
+        print()
+
+        # Por seguridad no imprimimos emails completos en logs.
+        for x in r["listos"][:20]:
+            correo = x["EMAIL"]
+            partes = correo.split("@", 1)
+            correo_mask = (
+                (partes[0][:2] + "***@" + partes[1])
+                if len(partes) == 2 else "***"
+            )
+            print(
+                f"  {x['REFERENCIA']} | {x['FECHA']} | "
+                f"{correo_mask} | {x['NOMBRE']}"
+            )
+
+        if len(r["listos"]) > 20:
+            print(
+                f"  ... y {len(r['listos']) - 20} candidatos adicionales"
+            )
+        print()
+
+    total_listos = (
+        len(resumen["ALDIA003"]["listos"])
+        + len(resumen["ALDIA000"]["listos"])
+    )
+
+    print("=" * 72)
+    print(f"TOTAL DE CORREOS QUE SE ENVIARÍAN HOY: {total_listos}")
+    print("=" * 72)
+    print("DIAGNÓSTICO FINALIZADO.")
+    print("NINGÚN CORREO FUE ENVIADO.")
+    print("NINGUNA FILA FUE AGREGADA O MODIFICADA.")
+
+
+if __name__ == "__main__":
+    main()
