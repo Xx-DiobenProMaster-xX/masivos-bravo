@@ -15,6 +15,7 @@ CARTERA_SPREADSHEET_ID = "13Vf32LzRI2V95dIUqfevzm-ZmsDR3d17UTre_7XJ-UU"
 ESTRUCTURADOS_SPREADSHEET_ID = "15sbBsZcMj8PMkHXByLqjcuqtvsY_2FGYiwhkKPmfIYM"
 
 HOJAS_INFO_CLIENTES = ["Info_Clientes_V2", "Hoja Info_Clientes_V2", ". Hoja Info_Clientes_V2"]
+HOJA_CARTERA_BEREX = "2. Cartera Berex"
 HOJA_EXCLUIR = "Excluir_correo"
 PLANTILLA_ID = "ESTBIENV003"
 
@@ -90,6 +91,73 @@ def maestro_clientes(gc):
         datos[ref] = actual
     print(f"Fuente clientes encontrada: {encontrada}")
     print(f"Referencias cargadas desde Info_Clientes_V2: {len(datos)}")
+    return datos
+
+
+
+def maestro_cartera_berex(gc):
+    """
+    Tercera fuente de contacto: 2. Cartera Berex.
+
+    Lee B:G e indexa cada cliente por las llaves disponibles:
+    Referencia, Referencia_Berex y Numero.
+    """
+    hoja = gc.open_by_key(CARTERA_SPREADSHEET_ID).worksheet(HOJA_CARTERA_BEREX)
+    valores = hoja.get("B:G")
+
+    if not valores:
+        return {}
+
+    cab = [str(x).strip() for x in valores[0]]
+
+    def idx(nombre):
+        return cab.index(nombre) if nombre in cab else None
+
+    i_nombre = idx("Nombre_Cliente")
+    i_email = idx("Email")
+
+    if i_nombre is None or i_email is None:
+        raise RuntimeError(
+            "2. Cartera Berex debe contener las columnas Nombre_Cliente y Email."
+        )
+
+    indices_llave = [
+        idx(nombre)
+        for nombre in ("Referencia", "Referencia_Berex", "Numero")
+        if idx(nombre) is not None
+    ]
+
+    if not indices_llave:
+        raise RuntimeError(
+            "2. Cartera Berex no contiene Referencia, Referencia_Berex ni Numero."
+        )
+
+    datos = {}
+
+    def guardar(llave, nombre, email):
+        ref = norm_ref(llave)
+        if not ref:
+            return
+
+        actual = datos.get(ref, {"NOMBRE": "", "EMAIL": ""})
+
+        if nombre and not actual["NOMBRE"]:
+            actual["NOMBRE"] = nombre
+
+        if correo_valido(email) and not correo_valido(actual["EMAIL"]):
+            actual["EMAIL"] = email
+
+        datos[ref] = actual
+
+    for fila in valores[1:]:
+        nombre = str(fila[i_nombre] if len(fila) > i_nombre else "").strip()
+        email = str(fila[i_email] if len(fila) > i_email else "").strip().lower()
+
+        for i_llave in indices_llave:
+            llave = fila[i_llave] if len(fila) > i_llave else ""
+            guardar(llave, nombre, email)
+
+    print(f"Referencias/llaves cargadas desde 2. Cartera Berex: {len(datos)}")
     return datos
 
 
@@ -198,6 +266,7 @@ def main():
 
     maestro = maestro_clientes(gc)
     maestro_pab = maestro_pab_proximos(gc)
+    maestro_berex = maestro_cartera_berex(gc)
     excluir = exclusiones(gc)
     existentes = ids_existentes(gc)
 
@@ -388,6 +457,9 @@ def main():
     total_con_email = 0
     total_sin_email = 0
     total_excluidos = 0
+    correos_desde_info = 0
+    correos_desde_pab = 0
+    correos_desde_berex = 0
 
     for fecha in sorted({e["FECHA"] for e in estructurados}):
         eventos_fecha = sorted(
@@ -405,20 +477,40 @@ def main():
             ref = e["REFERENCIA"]
             cli_info = maestro.get(ref, {})
             cli_pab = maestro_pab.get(ref, {})
+            cli_berex = maestro_berex.get(ref, {})
 
             nombre_info = str(cli_info.get("NOMBRE", "")).strip()
             email_info = str(cli_info.get("EMAIL", "")).strip().lower()
             nombre_pab = str(cli_pab.get("NOMBRE", "")).strip()
             email_pab = str(cli_pab.get("EMAIL", "")).strip().lower()
+            nombre_berex = str(cli_berex.get("NOMBRE", "")).strip()
+            email_berex = str(cli_berex.get("EMAIL", "")).strip().lower()
 
-            nombre = nombre_info or nombre_pab or "SIN NOMBRE"
-            email = email_info if correo_valido(email_info) else email_pab
+            nombre = nombre_info or nombre_pab or nombre_berex or "SIN NOMBRE"
+
+            fuente_email = ""
+            if correo_valido(email_info):
+                email = email_info
+                fuente_email = "Info_Clientes_V2"
+                correos_desde_info += 1
+            elif correo_valido(email_pab):
+                email = email_pab
+                fuente_email = "PAB_PROXIMOS"
+                correos_desde_pab += 1
+            elif correo_valido(email_berex):
+                email = email_berex
+                fuente_email = "2. Cartera Berex"
+                correos_desde_berex += 1
+            else:
+                email = ""
 
             fuentes_contacto = []
             if nombre_info or email_info:
                 fuentes_contacto.append("Info_Clientes_V2")
             if nombre_pab or email_pab:
                 fuentes_contacto.append("PAB_PROXIMOS")
+            if nombre_berex or email_berex:
+                fuentes_contacto.append("2. Cartera Berex")
             fuente_contacto = ",".join(fuentes_contacto) if fuentes_contacto else "NO_ENCONTRADO"
 
             estado = "OK"
@@ -452,12 +544,13 @@ def main():
                 f"{nombre} | "
                 f"{estado} | "
                 f"FUENTE={fuentes} | "
-                f"CONTACTO={fuente_contacto}"
+                f"CONTACTO={fuente_contacto} | "
+                f"EMAIL_DESDE={fuente_email or 'NINGUNA'}"
             )
 
     print()
     print("=" * 76)
-    print("REFERENCIAS SIN CONTACTO EN AMBAS FUENTES")
+    print("REFERENCIAS SIN CONTACTO EN LAS 3 FUENTES")
     print("=" * 76)
 
     faltantes_ambas = []
@@ -465,11 +558,17 @@ def main():
         ref = e["REFERENCIA"]
         a = maestro.get(ref, {})
         b = maestro_pab.get(ref, {})
+        c = maestro_berex.get(ref, {})
 
         email_a = str(a.get("EMAIL", "")).strip().lower()
         email_b = str(b.get("EMAIL", "")).strip().lower()
+        email_c = str(c.get("EMAIL", "")).strip().lower()
 
-        if not correo_valido(email_a) and not correo_valido(email_b):
+        if (
+            not correo_valido(email_a)
+            and not correo_valido(email_b)
+            and not correo_valido(email_c)
+        ):
             faltantes_ambas.append(ref)
 
     if faltantes_ambas:
@@ -478,7 +577,7 @@ def main():
     else:
         print("NINGUNA: todas las referencias tienen correo en alguna fuente.")
 
-    print(f"Total sin correo en ambas fuentes: {len(set(faltantes_ambas))}")
+    print(f"Total sin correo en las 3 fuentes: {len(set(faltantes_ambas))}")
 
     print()
     print("=" * 76)
@@ -486,6 +585,9 @@ def main():
     print("=" * 76)
     print(f"Estructurados únicos/eventos encontrados: {len(estructurados)}")
     print(f"Con correo válido: {total_con_email}")
+    print(f"  - Desde Info_Clientes_V2: {correos_desde_info}")
+    print(f"  - Desde PAB_PROXIMOS: {correos_desde_pab}")
+    print(f"  - Recuperados desde 2. Cartera Berex: {correos_desde_berex}")
     print(f"Sin correo válido: {total_sin_email}")
     print(f"En Excluir_correo: {total_excluidos}")
     print()
