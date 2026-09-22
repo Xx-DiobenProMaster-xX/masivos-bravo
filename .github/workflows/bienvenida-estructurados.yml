@@ -1,0 +1,29 @@
+name: Diagnóstico bienvenida Estructurados
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnostico:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      MI_JSON: ${{ secrets.MI_JSON }}
+
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install gspread google-auth
+
+      - name: Diagnosticar clientes recién estructurados
+        run: python bienvenida_estructurados.py
