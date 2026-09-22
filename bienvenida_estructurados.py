@@ -165,6 +165,75 @@ def main():
     # Consolidamos por referencia + fecha de liquidación.
     # Si al menos una fila de ese evento tiene P=TRUE,
     # consideramos la referencia estructurada para esa fecha.
+    print("=" * 76)
+    print()
+
+    # Diagnóstico específico de septiembre 2026 recorriendo TODA la hoja.
+    print("=" * 76)
+    print("FECHAS ENCONTRADAS EN SEPTIEMBRE 2026")
+    print("=" * 76)
+
+    conteo_sep = {}
+    detalle_ventana = []
+
+    for numero_fila, f in enumerate(filas[1:], start=2):
+        raw_c = f[2] if len(f) > 2 else ""
+        raw_h = f[7] if len(f) > 7 else ""
+        raw_p = f[15] if len(f) > 15 else ""
+
+        fecha = parse_fecha(raw_c)
+        if not fecha:
+            continue
+
+        if fecha.year == 2026 and fecha.month == 9:
+            conteo_sep[fecha] = conteo_sep.get(fecha, 0) + 1
+
+            if desde <= fecha <= hoy:
+                detalle_ventana.append(
+                    (
+                        numero_fila,
+                        raw_c,
+                        raw_h,
+                        raw_p,
+                        fecha,
+                        norm_ref(raw_h),
+                        es_true(raw_p),
+                    )
+                )
+
+    if conteo_sep:
+        for fecha in sorted(conteo_sep):
+            print(
+                f"{fecha.strftime('%d/%m/%Y')} | "
+                f"{conteo_sep[fecha]} filas"
+            )
+    else:
+        print("NO SE ENCONTRARON FECHAS DE SEPTIEMBRE 2026 EN C.")
+
+    print()
+    print("=" * 76)
+    print("DETALLE 16-22 SEPTIEMBRE (C / H / P)")
+    print("=" * 76)
+
+    if detalle_ventana:
+        for fila_n, raw_c, raw_h, raw_p, fecha, ref, est in detalle_ventana[:100]:
+            print(
+                f"Fila {fila_n} | "
+                f"C={raw_c!r} -> {fecha.strftime('%d/%m/%Y')} | "
+                f"H={raw_h!r} -> {ref!r} | "
+                f"P={raw_p!r} -> {est}"
+            )
+        if len(detalle_ventana) > 100:
+            print(
+                f"... y {len(detalle_ventana) - 100} filas adicionales "
+                "en la ventana."
+            )
+    else:
+        print("NO HAY FILAS ENTRE 16/09/2026 Y 22/09/2026.")
+
+    print("=" * 76)
+    print()
+
     eventos = {}
     invalidas = 0
     filas_ventana = 0
