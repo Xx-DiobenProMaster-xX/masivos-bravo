@@ -1467,6 +1467,102 @@ def plantilla_alianzas_virtual():
     })
 
 
+
+# ============================================================
+# PLANTILLAS CLIENTES AL DÍA
+# ============================================================
+
+PLANTILLAS_AL_DIA = {
+    "ALDIA003": {
+        "ID_PLANTILLA": "ALDIA003",
+        "NOMBRE": "Cliente al día · 3 días antes",
+        "ASUNTO": "Recordatorio de tu próxima fecha de pago | Bravo",
+        "ESTADO": "ACTIVA",
+    },
+    "ALDIA000": {
+        "ID_PLANTILLA": "ALDIA000",
+        "NOMBRE": "Cliente al día · fecha de pago hoy",
+        "ASUNTO": "Hoy es tu fecha de pago | Bravo",
+        "ESTADO": "ACTIVA",
+    },
+}
+
+
+def plantilla_al_dia_virtual(id_plantilla):
+    idp = str(id_plantilla or "").strip().upper()
+    datos = PLANTILLAS_AL_DIA.get(idp)
+    return pd.Series(datos) if datos else None
+
+
+def html_al_dia_bravo(nombre, fecha_pago, dias):
+    """HTML para recordar la fecha de pago de clientes que están al día."""
+    import html as _html
+
+    nombre = _html.escape(str(nombre or "Cliente").strip() or "Cliente")
+    fecha_txt = _html.escape(fecha_larga_pab(fecha_pago) or "Fecha por confirmar")
+    dias = int(numero(dias))
+
+    if dias == 0:
+        intro = "Te recordamos que hoy corresponde la fecha programada de tu próximo pago en Bravo."
+        destacado = "Hoy es tu fecha de pago"
+        destacado_2 = "Realízalo durante el día para mantener tu programa al día."
+        fondo_destacado = "#e9f7ff"
+        color_destacado = "#147fd1"
+    else:
+        intro = "Queremos recordarte que se acerca la fecha de tu próximo pago en Bravo."
+        destacado = "Faltan 3 días"
+        destacado_2 = "para tu fecha de pago."
+        fondo_destacado = "#f1edff"
+        color_destacado = "#5b45c6"
+
+    return f'''<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f4f5f9;font-family:Arial,Helvetica,sans-serif;color:#525b82;">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#f4f5f9;width:100%;border-collapse:collapse;"><tr><td align="center" style="padding:18px 8px;">
+<table role="presentation" width="700" cellspacing="0" cellpadding="0" border="0" style="width:700px;max-width:700px;background:#fff;border-collapse:collapse;border-top:6px solid #38278f;">
+
+<tr><td style="padding:26px 48px 18px;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr>
+<td width="68%"><img src="{BRAVO_LOGO_URL}" width="170" alt="Bravo" style="display:block;width:170px;height:auto;border:0;"></td>
+<td width="32%" align="right" style="font-size:13px;line-height:18px;color:#525b82;"><strong>Personas con<br>más posibilidades</strong></td>
+</tr></table></td></tr>
+
+<tr><td style="padding:14px 48px 4px;font-size:31px;line-height:38px;font-weight:800;color:#11183f;">Hola, <span style="color:#35238f;">{nombre}</span> &#128075;</td></tr>
+<tr><td style="padding:8px 48px 22px;font-size:18px;line-height:28px;color:#525b82;">{intro}</td></tr>
+
+<tr><td style="padding:0 48px 22px;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:{fondo_destacado};border-radius:18px;border-collapse:separate;"><tr>
+<td width="145" align="center" valign="middle" style="padding:28px 12px;font-size:68px;line-height:75px;">&#128197;</td>
+<td valign="middle" style="padding:28px 28px 28px 8px;">
+<div style="font-size:14px;line-height:20px;font-weight:800;text-transform:uppercase;color:{color_destacado};">Tu fecha de pago es</div>
+<div style="padding-top:5px;font-size:29px;line-height:36px;font-weight:800;color:#11183f;">{fecha_txt}</div>
+<div style="margin-top:18px;padding:13px 16px;background:#ffffff;border-radius:12px;">
+<span style="font-size:19px;line-height:25px;font-weight:800;color:{color_destacado};">{destacado}</span><br>
+<span style="font-size:16px;line-height:23px;color:#525b82;">{destacado_2}</span>
+</div></td></tr></table></td></tr>
+
+<tr><td style="padding:0 48px 16px;font-size:17px;line-height:27px;color:#525b82;">Realizar tu pago en la fecha acordada te permite mantener tu programa al día y continuar avanzando en tu proceso.</td></tr>
+<tr><td style="padding:0 48px 22px;font-size:17px;line-height:27px;color:#525b82;">Si tienes alguna duda o necesitas apoyo, puedes comunicarte con nuestro equipo por WhatsApp.</td></tr>
+
+<tr><td style="padding:2px 48px 30px;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr>
+<td align="center" bgcolor="#12bd70" style="border-radius:14px;"><a href="https://wa.me/{BRAVO_WHATSAPP}" style="display:block;padding:18px 20px;color:#fff;text-decoration:none;font-size:19px;line-height:24px;font-weight:800;">&#9742; &nbsp; Hablar con Bravo por WhatsApp</a></td>
+</tr></table></td></tr>
+
+<tr><td style="padding:14px 42px 26px;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr>
+<td width="33%" align="center" style="font-size:12px;line-height:17px;color:#525b82;"><div style="font-size:27px;color:#5b45c6;">&#9671;</div><strong style="display:block;margin-top:6px;color:#2d2088;">Misma seguridad</strong></td>
+<td width="34%" align="center" style="font-size:12px;line-height:17px;color:#525b82;"><div style="font-size:27px;color:#5b45c6;">&#128101;</div><strong style="display:block;margin-top:6px;color:#2d2088;">El mismo equipo</strong></td>
+<td width="33%" align="center" style="font-size:12px;line-height:17px;color:#525b82;"><div style="font-size:27px;color:#5b45c6;">&#9635;</div><strong style="display:block;margin-top:6px;color:#2d2088;">Más posibilidades</strong></td>
+</tr></table></td></tr>
+
+<tr><td align="center" style="padding:20px 48px;border-top:1px solid #dfe2ed;font-size:17px;line-height:25px;color:#11183f;"><strong>¡Gracias por ser parte de Bravo!</strong><br><span style="font-size:15px;color:#525b82;">Equipo Bravo</span></td></tr>
+
+<tr><td style="padding:20px 48px;background:#f6f4ff;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr>
+<td width="35%"><img src="{BRAVO_LOGO_URL}" width="120" alt="Bravo" style="display:block;width:120px;height:auto;border:0;"></td>
+<td width="65%" style="padding-left:22px;border-left:1px solid #d9d5ec;font-size:12px;line-height:19px;color:#525b82;"><strong style="color:#2d2088;">Bravo S.A.S.</strong><br>&#9742; {BRAVO_WHATSAPP_DISPLAY}<br>Lunes a viernes, 8:00 a.m. - 6:00 p.m.</td>
+</tr></table></td></tr>
+
+<tr><td height="14" style="height:14px;background:#38278f;font-size:0;line-height:0;">&nbsp;</td></tr>
+</table></td></tr></table></body></html>'''
+
+
 # ============================================================
 # PLANTILLAS PAB
 # ============================================================
@@ -3037,8 +3133,11 @@ def obtener_ids_plantillas_activas():
 
 
 def obtener_plantilla_generica(id_plantilla):
-    if str(id_plantilla or "").strip().upper() == ALIANZAS_TEMPLATE_ID:
+    idp = str(id_plantilla or "").strip().upper()
+    if idp == ALIANZAS_TEMPLATE_ID:
         return plantilla_alianzas_virtual()
+    if idp in PLANTILLAS_AL_DIA:
+        return plantilla_al_dia_virtual(idp)
     if plantillas.empty or "ID_PLANTILLA" not in plantillas.columns:
         return None
 
@@ -3082,6 +3181,8 @@ def nombre_plantilla_visible(id_plantilla):
     nombres_base = {
         "PAB000": "Pago a banco · día del pago",
         "PAB003": "Pago a banco · 3 días antes",
+        "ALDIA000": "Cliente al día · fecha de pago hoy",
+        "ALDIA003": "Cliente al día · 3 días antes",
         "T001": "1 día en mora",
         "T030": "30 días en mora",
         "T060": "60 días en mora",
@@ -7042,7 +7143,7 @@ elif menu == "📝 Plantillas":
         st.info("No hay plantillas disponibles para previsualizar.")
     else:
         ids_plantilla = [str(x).strip() for x in plantillas["ID_PLANTILLA"].tolist() if str(x).strip()]
-        ids_plantilla.append(ALIANZAS_TEMPLATE_ID)
+        ids_plantilla.extend([ALIANZAS_TEMPLATE_ID, "ALDIA003", "ALDIA000"])
         ids_plantilla = list(dict.fromkeys(ids_plantilla))
         st.divider()
         st.subheader("👁️ Vista previa de plantilla")
@@ -7057,6 +7158,15 @@ elif menu == "📝 Plantillas":
                 ejemplo={"NOMBRE":"Cliente de ejemplo","REFERENCIA":"PRUEBA-001","EMAIL":"cliente@ejemplo.com","BANCO":"Banco de ejemplo","ENCARGADO":"Alianzas"}
                 asunto_preview=reemplazar_variables_genericas(fila_preview.get("ASUNTO",""),ejemplo)
                 html_preview=html_alianzas_bravo(ejemplo["NOMBRE"],ejemplo["BANCO"])
+            elif id_upper in {"ALDIA000", "ALDIA003"}:
+                dias_preview = 0 if id_upper == "ALDIA000" else 3
+                fila_preview = plantilla_al_dia_virtual(id_upper)
+                asunto_preview = str(fila_preview.get("ASUNTO", "")).strip()
+                html_preview = html_al_dia_bravo(
+                    "Dioben Jesus Araujo Hernandez",
+                    "25/09/2026",
+                    dias_preview
+                )
             elif id_upper in {"PAB000", "PAB003"}:
                 dias_preview = 0 if id_upper == "PAB000" else 3
                 datos_demo = {"NOMBRE":"Dioben Jesus Araujo Hernandez","REFERENCIA":"PRUEBA-001","FECHA_PAB":"18/09/2026","VALOR_PAB":1000000}
