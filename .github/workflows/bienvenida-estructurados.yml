@@ -1,4 +1,4 @@
-name: Diagnóstico bienvenida Estructurados
+name: Diagnóstico bienvenida estructurados
 
 on:
   workflow_dispatch:
@@ -10,6 +10,9 @@ jobs:
 
     env:
       MI_JSON: ${{ secrets.MI_JSON }}
+      GMAIL_CLIENT_ID: ${{ secrets.GMAIL_CLIENT_ID }}
+      GMAIL_CLIENT_SECRET: ${{ secrets.GMAIL_CLIENT_SECRET }}
+      GMAIL_REFRESH_TOKEN: ${{ secrets.GMAIL_REFRESH_TOKEN }}
 
     steps:
       - name: Descargar repositorio
@@ -21,9 +24,9 @@ jobs:
           python-version: "3.12"
 
       - name: Instalar dependencias
-  run: |
-    python -m pip install --upgrade pip
-    pip install gspread google-auth google-api-python-client pandas openpyxl
+        run: |
+          python -m pip install --upgrade pip
+          pip install gspread google-auth google-api-python-client pandas openpyxl
 
       - name: Diagnosticar clientes recién estructurados
         run: python bienvenida_estructurados.py
