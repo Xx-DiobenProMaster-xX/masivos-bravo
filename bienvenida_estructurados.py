@@ -2,7 +2,11 @@ import os, re, json, unicodedata
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import gspread
+import io
+import pandas as pd
 from google.oauth2.service_account import Credentials
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseDownload
 
 TZ = ZoneInfo("America/Bogota")
 
@@ -16,7 +20,7 @@ ESTRUCTURADOS_SPREADSHEET_ID = "15sbBsZcMj8PMkHXByLqjcuqtvsY_2FGYiwhkKPmfIYM"
 
 HOJAS_INFO_CLIENTES = ["Info_Clientes_V2", "Hoja Info_Clientes_V2", ". Hoja Info_Clientes_V2"]
 HOJA_CARTERA_BEREX = "2. Cartera Berex"  # legado; no usado aquí
-ASIGNACIONES_SPREADSHEET_ID = "18bPas9bawcno5w6X4lGJYDjkXdNtS4qT"
+ASIGNACIONES_FOLDER_ID = "1cf2p3R7iM0xowAt4muEruDwxZoZqD_jB"
 MESES_ES = {1:"Enero",2:"Febrero",3:"Marzo",4:"Abril",5:"Mayo",6:"Junio",
             7:"Julio",8:"Agosto",9:"Septiembre",10:"Octubre",11:"Noviembre",12:"Diciembre"}
 HOJA_EXCLUIR = "Excluir_correo"
@@ -98,48 +102,122 @@ def maestro_clientes(gc):
 
 
 
-def maestro_asignaciones_vigentes(gc, hoy):
-    """Carga A=Referencia, C=Nombre, E=correo del mes actual;
-    si esa hoja no existe/con datos, usa la última hoja mensual con información."""
-    libro = gc.open_by_key(ASIGNACIONES_SPREADSHEET_ID)
-    hojas = libro.worksheets()
-    esperado = f"{MESES_ES[hoy.month]} {hoy.year}"
-    hoja = None
+def _credenciales_service_account():
+    raw = os.environ.get("MI_JSON", "").strip()
+    if not raw:
+        raise RuntimeError("Falta el secret MI_JSON.")
+    info = json.loads(raw)
+    return Credentials.from_service_account_info(info, scopes=SCOPES)
 
-    for ws in hojas:
-        if norm_txt(ws.title) == norm_txt(esperado):
-            muestra = ws.get("A2:E5")
-            if any(any(str(c).strip() for c in fila) for fila in muestra):
-                hoja = ws
-                break
+
+def _descargar_archivo_drive(drive, file_id):
+    request = drive.files().get_media(fileId=file_id)
+    buffer = io.BytesIO()
+    downloader = MediaIoBaseDownload(buffer, request)
+    terminado = False
+    while not terminado:
+        _, terminado = downloader.next_chunk()
+    buffer.seek(0)
+    return buffer
+
+
+def _mes_desde_nombre_hoja(nombre):
+    partes = str(nombre or "").strip().split()
+    if len(partes) != 2 or not partes[1].isdigit():
+        return None
+    mes_num = next(
+        (n for n, v in MESES_ES.items() if norm_txt(v) == norm_txt(partes[0])),
+        None
+    )
+    if mes_num is None:
+        return None
+    return int(partes[1]), mes_num
+
+
+def maestro_asignaciones_vigentes(gc, hoy):
+    """Busca en Drive el XLSX de Asignaciones más reciente y lee A/C/E con pandas."""
+    creds = _credenciales_service_account()
+    drive = build("drive", "v3", credentials=creds, cache_discovery=False)
+
+    # Busca archivos dentro de la carpeta compartida. Soporta XLSX y Excel antiguo.
+    q = (
+        f"'{ASIGNACIONES_FOLDER_ID}' in parents and trashed = false "
+        "and (mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' "
+        "or mimeType = 'application/vnd.ms-excel')"
+    )
+    resp = drive.files().list(
+        q=q,
+        fields="files(id,name,mimeType,modifiedTime,createdTime)",
+        orderBy="modifiedTime desc",
+        pageSize=100,
+        supportsAllDrives=True,
+        includeItemsFromAllDrives=True,
+    ).execute()
+    archivos = resp.get("files", [])
+
+    archivos = [
+        f for f in archivos
+        if "ASIGNACIONES DE CARTERA" in norm_txt(f.get("name", ""))
+    ]
+    if not archivos:
+        raise RuntimeError(
+            "No encontré archivos Excel 'Asignaciones de Cartera' dentro de la carpeta. "
+            "Comparte la carpeta/archivo con el correo de la service account de MI_JSON."
+        )
+
+    # Priorizamos el libro cuyo nombre cubra el mes/año actual; si no, el más recientemente modificado.
+    meses_abrev = {
+        1:"ENE",2:"FEB",3:"MAR",4:"ABR",5:"MAY",6:"JUN",
+        7:"JUL",8:"AGO",9:"SEP",10:"OCT",11:"NOV",12:"DIC"
+    }
+    yy = str(hoy.year)[-2:]
+    esperado_token = f"{meses_abrev[hoy.month]}{yy}"
+    candidatos_mes = [f for f in archivos if esperado_token in norm_txt(f.get("name","")).replace(" ","")]
+    archivo = candidatos_mes[0] if candidatos_mes else archivos[0]
+
+    print(f"Archivo de asignaciones seleccionado: {archivo['name']}")
+    print(f"Última modificación Drive: {archivo.get('modifiedTime','')}")
+
+    contenido = _descargar_archivo_drive(drive, archivo["id"])
+    excel = pd.ExcelFile(contenido, engine="openpyxl")
+    hojas = excel.sheet_names
+
+    esperado = f"{MESES_ES[hoy.month]} {hoy.year}"
+    hoja = next((h for h in hojas if norm_txt(h) == norm_txt(esperado)), None)
 
     if hoja is None:
         candidatas = []
-        for ws in hojas:
-            partes = str(ws.title).strip().split()
-            if len(partes) != 2 or not partes[1].isdigit():
-                continue
-            mes_num = next((n for n,v in MESES_ES.items()
-                            if norm_txt(v) == norm_txt(partes[0])), None)
-            if mes_num is None:
-                continue
-            muestra = ws.get("A2:E5")
-            if any(any(str(c).strip() for c in fila) for fila in muestra):
-                candidatas.append((int(partes[1]), mes_num, ws))
+        for h in hojas:
+            parsed = _mes_desde_nombre_hoja(h)
+            if parsed:
+                candidatas.append((parsed[0], parsed[1], h))
         if not candidatas:
-            raise RuntimeError("No encontré hojas mensuales con información en Asignaciones.")
+            raise RuntimeError(
+                f"El archivo {archivo['name']} no contiene hojas mensuales reconocibles. "
+                f"Hojas encontradas: {hojas}"
+            )
         candidatas.sort(key=lambda x:(x[0],x[1]), reverse=True)
         hoja = candidatas[0][2]
 
-    print(f"Fuente asignaciones seleccionada: {hoja.title}")
-    valores = hoja.get("A:E")
+    print(f"Hoja mensual seleccionada: {hoja}")
+
+    # Volvemos a descargar porque ExcelFile ya consumió el buffer en algunas versiones.
+    contenido = _descargar_archivo_drive(drive, archivo["id"])
+    df = pd.read_excel(
+        contenido,
+        sheet_name=hoja,
+        usecols="A:E",
+        dtype=str,
+        engine="openpyxl"
+    ).fillna("")
+
     datos = {}
-    for fila in valores[1:]:
-        ref = norm_ref(fila[0] if len(fila)>0 else "")
+    for _, fila in df.iterrows():
+        ref = norm_ref(fila.iloc[0] if len(fila)>0 else "")
         if not ref:
             continue
-        nombre = str(fila[2] if len(fila)>2 else "").strip()
-        email = str(fila[4] if len(fila)>4 else "").strip().lower()
+        nombre = str(fila.iloc[2] if len(fila)>2 else "").strip()
+        email = str(fila.iloc[4] if len(fila)>4 else "").strip().lower()
         actual = datos.get(ref, {"NOMBRE":"","EMAIL":""})
         if nombre and not actual["NOMBRE"]:
             actual["NOMBRE"] = nombre
@@ -147,9 +225,8 @@ def maestro_asignaciones_vigentes(gc, hoy):
             actual["EMAIL"] = email
         datos[ref] = actual
 
-    print(f"Referencias cargadas desde {hoja.title}: {len(datos)}")
+    print(f"Referencias cargadas desde {archivo['name']} / {hoja}: {len(datos)}")
     return datos
-
 
 def exclusiones(gc):
     vals = gc.open_by_key(ESTRUCTURADOS_SPREADSHEET_ID).worksheet(HOJA_EXCLUIR).col_values(1)
