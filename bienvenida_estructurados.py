@@ -7,6 +7,10 @@ import pandas as pd
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
+from google.oauth2.credentials import Credentials as UserCredentials
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+import base64
 
 TZ = ZoneInfo("America/Bogota")
 
@@ -240,350 +244,210 @@ def ids_existentes(gc):
     i = cab.index("ID_ENVIO")
     return {str(f[i]).strip() for f in vals[1:] if len(f)>i and str(f[i]).strip()}
 
+
+GMAIL_FROM = "estructurados@gobravo.com.co"
+GMAIL_REPLY_TO = "estructurados@gobravo.com.co"
+WHATSAPP_URL = "https://wa.me/573012411885"
+LOGO_URL = "https://drive.google.com/uc?export=view&id=13kK3v4FiyXFa4UzM_au3TllhOhwjvWb7"
+ASUNTO_BIENVENIDA = "¡Bienvenido al área de estructurados! | Bravo"
+
+
+def gmail_service():
+    client_id = os.environ.get("GMAIL_CLIENT_ID", "").strip()
+    client_secret = os.environ.get("GMAIL_CLIENT_SECRET", "").strip()
+    refresh_token = os.environ.get("GMAIL_REFRESH_TOKEN", "").strip()
+    if not all([client_id, client_secret, refresh_token]):
+        raise RuntimeError("Faltan GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET o GMAIL_REFRESH_TOKEN.")
+    creds = UserCredentials(
+        token=None,
+        refresh_token=refresh_token,
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=client_id,
+        client_secret=client_secret,
+        scopes=["https://www.googleapis.com/auth/gmail.send"],
+    )
+    return build("gmail", "v1", credentials=creds, cache_discovery=False)
+
+
+def html_bienvenida_estructurados(nombre):
+    nombre = str(nombre or "").strip()
+    saludo = f"Hola, {nombre}" if nombre else "Hola"
+    return f"""<!doctype html>
+<html>
+<body style="margin:0;padding:0;background:#f4f5fb;font-family:Arial,Helvetica,sans-serif;color:#17145f;">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f4f5fb;padding:24px 0;">
+<tr><td align="center">
+<table role="presentation" width="600" cellspacing="0" cellpadding="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:18px;overflow:hidden;">
+<tr><td align="center" style="padding:28px 28px 12px;">
+<img src="{LOGO_URL}" alt="Bravo" width="150" style="display:block;max-width:150px;height:auto;">
+</td></tr>
+<tr><td align="center" style="padding:10px 34px 8px;">
+<div style="font-size:30px;font-weight:800;line-height:1.1;">¡Bienvenido al área<br>de <em>estructurados!</em></div>
+<div style="margin:20px auto 0;background:#eee9ff;border-radius:24px;padding:10px 18px;font-size:13px;max-width:390px;">
+Estás cada vez más cerca de liberarte de las deudas.
+</div>
+</td></tr>
+<tr><td style="padding:20px 42px 8px;font-size:15px;line-height:1.55;">
+<strong>{saludo}</strong><br><br>
+Acabas de iniciar tu proceso de <strong>liquidación estructurada</strong>, un beneficio exclusivo para clientes con un excelente hábito de pago.
+</td></tr>
+<tr><td style="padding:20px 34px 10px;background:#8269df;text-align:center;color:white;">
+<div style="font-size:24px;font-weight:800;">Para tener éxito<br><span style="color:#35f0ef;">en esta etapa recuerda:</span></div>
+</td></tr>
+<tr><td style="padding:8px 42px 30px;background:#8269df;">
+<div style="background:#342b86;color:white;border-radius:14px;padding:18px;margin:12px 0;font-size:13px;line-height:1.45;">
+<strong style="font-size:18px;color:#35f0ef;">1</strong><br>
+Si tienes comisiones diferidas, firmaste un pagaré que garantiza el pago total, incluso si decides no continuar con el programa.
+</div>
+<div style="background:#342b86;color:white;border-radius:14px;padding:18px;margin:12px 0;font-size:13px;line-height:1.45;">
+<strong style="font-size:18px;color:#35f0ef;">2</strong><br>
+Es importante cumplir puntualmente con los acuerdos de pago pendientes con las entidades financieras. En caso de incumplimiento tus aportes se destinarán primero a intereses de mora, luego a gastos de cobranza, interés corriente y, por último, a capital.
+</div>
+<div style="background:#342b86;color:white;border-radius:14px;padding:18px;margin:12px 0;font-size:13px;line-height:1.45;">
+<strong style="font-size:18px;color:#35f0ef;">3</strong><br>
+Si realizas más de un pago bancario, te informaremos oportunamente cómo se aplican.
+</div>
+</td></tr>
+<tr><td style="padding:26px 42px;text-align:center;font-size:14px;line-height:1.5;">
+Si necesitas apoyo, nuestro equipo está disponible para ayudarte.<br><br>
+<a href="{WHATSAPP_URL}" style="display:block;background:#15c576;color:white;text-decoration:none;font-weight:700;border-radius:12px;padding:14px 18px;">Hablar con Bravo por WhatsApp</a>
+</td></tr>
+<tr><td style="background:#eee9ff;text-align:center;padding:20px 30px;">
+<strong style="font-size:16px;">Disciplina hoy, tranquilidad mañana.</strong><br>
+<span style="font-size:12px;">Estamos contigo durante esta nueva etapa.</span>
+</td></tr>
+<tr><td style="background:#3b2a98;text-align:center;color:white;padding:24px 30px;font-size:12px;">
+<strong>¡Gracias por confiar en nosotros!</strong><br>Equipo Bravo
+</td></tr>
+</table>
+</td></tr></table>
+</body></html>"""
+
+
+def enviar_gmail(service, destino, asunto, html):
+    msg = MIMEMultipart("alternative")
+    msg["To"] = destino
+    msg["From"] = GMAIL_FROM
+    msg["Reply-To"] = GMAIL_REPLY_TO
+    msg["Subject"] = asunto
+    msg.attach(MIMEText(html, "html", "utf-8"))
+    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")
+    return service.users().messages().send(userId="me", body={"raw": raw}).execute()
+
+
+def agregar_cola(ws, id_envio, ref, nombre, email, fecha_liquidacion, estado, message_id="", error=""):
+    ahora = datetime.now(TZ)
+    # A:O según estructura existente de COLA_ENVIO.
+    fila = [
+        id_envio, "AUTO_BIENVENIDA_ESTRUCTURADOS", ref, nombre, email,
+        PLANTILLA_ID, ASUNTO_BIENVENIDA, estado,
+        ahora.strftime("%Y-%m-%d %H:%M:%S"),
+        ahora.strftime("%Y-%m-%d %H:%M:%S") if estado == "ENVIADO" else "",
+        1, error, message_id,
+        f"Bienvenida estructurados | liquidación {fecha_liquidacion.strftime('%d/%m/%Y')}",
+        "AUTO",
+    ]
+    ws.append_row(fila, value_input_option="USER_ENTERED")
+
+
 def main():
     ahora = datetime.now(TZ)
     hoy = ahora.date()
-    desde = hoy - timedelta(days=6)
+    limite = hoy - timedelta(days=3)
+    inicio_mes = hoy.replace(day=1)
 
     print("=" * 76)
-    print("DIAGNÓSTICO 7 DÍAS - BIENVENIDA A ESTRUCTURADOS")
+    print("BIENVENIDA A ESTRUCTURADOS - PRODUCCIÓN")
     print(f"Fecha/hora Colombia: {ahora.strftime('%d/%m/%Y %H:%M:%S')}")
-    print(
-        f"Ventana revisada: {desde.strftime('%d/%m/%Y')} "
-        f"al {hoy.strftime('%d/%m/%Y')}"
-    )
-    print("NINGÚN CORREO SERÁ ENVIADO / NINGÚN SHEET SERÁ MODIFICADO")
+    print(f"Primera puesta al día: liquidaciones {inicio_mes.strftime('%d/%m/%Y')} a {limite.strftime('%d/%m/%Y')}")
     print("=" * 76)
 
-    gc = sheets()
+    raw = os.environ.get("MI_JSON", "").strip()
+    if not raw:
+        raise RuntimeError("Falta MI_JSON.")
+    sa = json.loads(raw)
+    creds = Credentials.from_service_account_info(sa, scopes=SCOPES)
+    gc = gspread.authorize(creds)
+
     libro_pipeline = gc.open_by_key(PIPELINE_SPREADSHEET_ID)
-
     filas_mes = libro_pipeline.worksheet(PIPELINE_SHEET_MES).get("A:P")
-    filas_historico = libro_pipeline.worksheet(PIPELINE_SHEET).get("A:P")
-
-    # Unificamos ambas fuentes conservando una sola cabecera.
-    # Cada fila lleva además el nombre de su fuente para diagnóstico.
-    filas_fuente = []
-
-    for f in filas_mes[1:]:
-        filas_fuente.append(("BD del mes", f))
-
-    for f in filas_historico[1:]:
-        filas_fuente.append(("BD 2026", f))
-
-    # Se mantiene "filas" solo para los bloques diagnósticos existentes.
-    # Incluye cabecera ficticia + todas las filas de ambas fuentes.
-    filas = [[""] * 16] + [f for _, f in filas_fuente]
+    filas_hist = libro_pipeline.worksheet(PIPELINE_SHEET).get("A:P")
+    fuentes = [("BD del mes", f) for f in filas_mes[1:]] + [("BD 2026", f) for f in filas_hist[1:]]
 
     maestro = maestro_clientes(gc)
-    maestro_asignaciones = maestro_asignaciones_vigentes(gc, hoy)
+    asignaciones = maestro_asignaciones_vigentes(gc, hoy)
     excluir = exclusiones(gc)
     existentes = ids_existentes(gc)
+    cola = gc.open_by_key(MASIVOS_SPREADSHEET_ID).worksheet("COLA_ENVIO")
 
-    print()
-    print("=" * 76)
-    print("MUESTRA RAW DE GOOGLE SHEETS - COLUMNAS C / H / P")
-    print("=" * 76)
-
-    muestras = 0
-    for numero_fila, f in enumerate(filas[1:], start=2):
-        raw_c = f[2] if len(f) > 2 else ""
-        raw_h = f[7] if len(f) > 7 else ""
-        raw_p = f[15] if len(f) > 15 else ""
-
-        # Mostrar primero filas que tengan contenido en C/H.
-        if not str(raw_c).strip() and not str(raw_h).strip():
-            continue
-
-        fecha_parseada = parse_fecha(raw_c)
-        ref_parseada = norm_ref(raw_h)
-        p_parseado = es_true(raw_p)
-
-        print(
-            f"Fila {numero_fila} | "
-            f"C RAW={raw_c!r} -> FECHA={fecha_parseada!r} | "
-            f"H RAW={raw_h!r} -> REF={ref_parseada!r} | "
-            f"P RAW={raw_p!r} -> TRUE={p_parseado}"
-        )
-
-        muestras += 1
-        if muestras >= 20:
-            break
-
-    print("=" * 76)
-    print()
-
-    # Una referencia puede aparecer varias veces.
-    # Consolidamos por referencia + fecha de liquidación.
-    # Si al menos una fila de ese evento tiene P=TRUE,
-    # consideramos la referencia estructurada para esa fecha.
-    print("=" * 76)
-    print()
-
-    # Diagnóstico específico de septiembre 2026 recorriendo TODA la hoja.
-    print("=" * 76)
-    print("FECHAS ENCONTRADAS EN SEPTIEMBRE 2026")
-    print("=" * 76)
-
-    conteo_sep = {}
-    detalle_ventana = []
-
-    for numero_fila, f in enumerate(filas[1:], start=2):
-        raw_c = f[2] if len(f) > 2 else ""
-        raw_h = f[7] if len(f) > 7 else ""
-        raw_p = f[15] if len(f) > 15 else ""
-
-        fecha = parse_fecha(raw_c)
-        if not fecha:
-            continue
-
-        if fecha.year == 2026 and fecha.month == 9:
-            conteo_sep[fecha] = conteo_sep.get(fecha, 0) + 1
-
-            if desde <= fecha <= hoy:
-                detalle_ventana.append(
-                    (
-                        numero_fila,
-                        raw_c,
-                        raw_h,
-                        raw_p,
-                        fecha,
-                        norm_ref(raw_h),
-                        es_true(raw_p),
-                    )
-                )
-
-    if conteo_sep:
-        for fecha in sorted(conteo_sep):
-            print(
-                f"{fecha.strftime('%d/%m/%Y')} | "
-                f"{conteo_sep[fecha]} filas"
-            )
-    else:
-        print("NO SE ENCONTRARON FECHAS DE SEPTIEMBRE 2026 EN C.")
-
-    print()
-    print("=" * 76)
-    print("DETALLE 16-22 SEPTIEMBRE (C / H / P)")
-    print("=" * 76)
-
-    if detalle_ventana:
-        for fila_n, raw_c, raw_h, raw_p, fecha, ref, est in detalle_ventana[:100]:
-            print(
-                f"Fila {fila_n} | "
-                f"C={raw_c!r} -> {fecha.strftime('%d/%m/%Y')} | "
-                f"H={raw_h!r} -> {ref!r} | "
-                f"P={raw_p!r} -> {est}"
-            )
-        if len(detalle_ventana) > 100:
-            print(
-                f"... y {len(detalle_ventana) - 100} filas adicionales "
-                "en la ventana."
-            )
-    else:
-        print("NO HAY FILAS ENTRE 16/09/2026 Y 22/09/2026.")
-
-    print("=" * 76)
-    print()
-
+    # Un evento por referencia + fecha. P=TRUE confirma estructurado.
     eventos = {}
-    invalidas = 0
-    filas_ventana = 0
-    filas_true = 0
+    for fuente, f in fuentes:
+        fecha = parse_fecha(f[2] if len(f)>2 else "")
+        ref = norm_ref(f[7] if len(f)>7 else "")
+        est = es_true(f[15] if len(f)>15 else "")
+        if not fecha or not ref or not est:
+            continue
+        if not (inicio_mes <= fecha <= limite):
+            continue
+        eventos[(ref, fecha)] = {"REF": ref, "FECHA": fecha, "FUENTE": fuente}
 
-    for fuente, f in filas_fuente:
-        ref = norm_ref(f[7] if len(f) > 7 else "")        # H
-        fecha = parse_fecha(f[2] if len(f) > 2 else "")  # C
-        est = es_true(f[15] if len(f) > 15 else "")      # P
+    print(f"Estructurados elegibles encontrados: {len(eventos)}")
 
-        if not fecha:
-            invalidas += 1
+    gmail = gmail_service()
+    enviados = duplicados = excluidos = sin_correo = errores = 0
+
+    for _, e in sorted(eventos.items(), key=lambda kv:(kv[1]["FECHA"], kv[1]["REF"])):
+        ref, fecha = e["REF"], e["FECHA"]
+        id_envio = f"ENV-ESTBIENV-{fecha.strftime('%Y%m%d')}-{ref}-{PLANTILLA_ID}"
+
+        if id_envio in existentes:
+            duplicados += 1
+            continue
+        if ref in excluir:
+            excluidos += 1
             continue
 
-        if not (desde <= fecha <= hoy):
-            continue
-
-        filas_ventana += 1
-
-        if not ref:
-            continue
-
-        clave = (ref, fecha.isoformat())
-        evento = eventos.setdefault(
-            clave,
-            {
-                "REFERENCIA": ref,
-                "FECHA": fecha,
-                "ESTRUCTURADO": False,
-                "FILAS": 0,
-                "FUENTES": set(),
-            },
-        )
-        evento["FILAS"] += 1
-        evento["FUENTES"].add(fuente)
-
-        if est:
-            evento["ESTRUCTURADO"] = True
-            filas_true += 1
-
-    estructurados = [
-        e for e in eventos.values()
-        if e["ESTRUCTURADO"]
-    ]
-
-    print(f"Filas revisadas en BD del mes: {max(len(filas_mes) - 1, 0)}")
-    print(f"Filas revisadas en BD 2026: {max(len(filas_historico) - 1, 0)}")
-    print(f"Filas combinadas revisadas: {len(filas_fuente)}")
-    print(f"Filas dentro de la ventana: {filas_ventana}")
-    print(f"Filas dentro de la ventana con P=TRUE: {filas_true}")
-    print(f"Eventos únicos estructurados: {len(estructurados)}")
-    print(f"Filas con fecha inválida/vacía: {invalidas}")
-    print()
-
-    print("=" * 76)
-    print("RESUMEN POR FECHA")
-    print("=" * 76)
-
-    for n in range(7):
-        fecha = desde + timedelta(days=n)
-        eventos_fecha = [
-            e for e in estructurados
-            if e["FECHA"] == fecha
-        ]
-        refs_fecha = {
-            e["REFERENCIA"]
-            for e in eventos_fecha
-        }
-        print(
-            f"{fecha.strftime('%d/%m/%Y')} | "
-            f"{len(refs_fecha)} referencias estructuradas"
-        )
-
-    print()
-    print("=" * 76)
-    print("DETALLE DE ESTRUCTURADOS EN LOS ÚLTIMOS 7 DÍAS")
-    print("=" * 76)
-
-    total_con_email = 0
-    total_sin_email = 0
-    total_excluidos = 0
-    correos_desde_info = 0
-    correos_desde_asignaciones = 0
-
-    for fecha in sorted({e["FECHA"] for e in estructurados}):
-        eventos_fecha = sorted(
-            [e for e in estructurados if e["FECHA"] == fecha],
-            key=lambda x: x["REFERENCIA"],
-        )
-
-        print()
-        print(
-            f"--- {fecha.strftime('%d/%m/%Y')} "
-            f"({len(eventos_fecha)} referencias) ---"
-        )
-
-        for e in eventos_fecha:
-            ref = e["REFERENCIA"]
-            cli_info = maestro.get(ref, {})
-            cli_asig = maestro_asignaciones.get(ref, {})
-            nombre_info = str(cli_info.get("NOMBRE", "")).strip()
-            email_info = str(cli_info.get("EMAIL", "")).strip().lower()
-            nombre_asig = str(cli_asig.get("NOMBRE", "")).strip()
-            email_asig = str(cli_asig.get("EMAIL", "")).strip().lower()
-
-            nombre = nombre_info or nombre_asig or "SIN NOMBRE"
-            fuente_email = ""
-            if correo_valido(email_info):
-                email = email_info
-                fuente_email = "Info_Clientes_V2"
-                correos_desde_info += 1
-            elif correo_valido(email_asig):
-                email = email_asig
-                fuente_email = "Asignaciones"
-                correos_desde_asignaciones += 1
-            else:
-                email = ""
-
-            fuentes_contacto = []
-            if nombre_info or email_info:
-                fuentes_contacto.append("Info_Clientes_V2")
-            if nombre_asig or email_asig:
-                fuentes_contacto.append("Asignaciones")
-            fuente_contacto = ",".join(fuentes_contacto) if fuentes_contacto else "NO_ENCONTRADO"
-
-            estado = "OK"
-
-            if ref in excluir:
-                estado = "EXCLUIR_CORREO"
-                total_excluidos += 1
-            elif not correo_valido(email):
-                estado = "SIN_CORREO"
-                total_sin_email += 1
-            else:
-                total_con_email += 1
-
-            # Solo como referencia diagnóstica:
-            # muestra si el eventual ID de bienvenida ya existe.
-            id_envio = (
-                "ENV-ESTBIENV-"
-                f"{fecha.strftime('%Y%m%d')}-"
-                f"{ref}-"
-                f"{PLANTILLA_ID}"
-            )
-            if id_envio in existentes:
-                estado += " | YA_EN_COLA"
-
-            email_mostrar = ocultar_email(email) if email else "SIN EMAIL"
-
-            fuentes = ",".join(sorted(e.get("FUENTES", [])))
-            print(
-                f"{ref} | "
-                f"{email_mostrar} | "
-                f"{nombre} | "
-                f"{estado} | "
-                f"FUENTE={fuentes} | "
-                f"CONTACTO={fuente_contacto} | "
-                f"EMAIL_DESDE={fuente_email or 'NINGUNA'}"
-            )
-
-    print()
-    print("=" * 76)
-    print("REFERENCIAS SIN CONTACTO EN LAS 2 FUENTES")
-    print("=" * 76)
-
-    faltantes_ambas = []
-    for e in estructurados:
-        ref = e["REFERENCIA"]
         a = maestro.get(ref, {})
-        b = maestro_asignaciones.get(ref, {})
-        email_a = str(a.get("EMAIL", "")).strip().lower()
-        email_b = str(b.get("EMAIL", "")).strip().lower()
-        if not correo_valido(email_a) and not correo_valido(email_b):
-            faltantes_ambas.append(ref)
+        b = asignaciones.get(ref, {})
+        nombre = str(a.get("NOMBRE","")).strip() or str(b.get("NOMBRE","")).strip()
+        email_a = str(a.get("EMAIL","")).strip().lower()
+        email_b = str(b.get("EMAIL","")).strip().lower()
+        email = email_a if correo_valido(email_a) else email_b if correo_valido(email_b) else ""
 
-    if faltantes_ambas:
-        for ref in sorted(set(faltantes_ambas)):
-            print(ref)
-    else:
-        print("NINGUNA: todas las referencias tienen correo en alguna fuente.")
+        if not correo_valido(email):
+            sin_correo += 1
+            print(f"SIN_CORREO | {ref} | {fecha.strftime('%d/%m/%Y')}")
+            continue
 
-    print(f"Total sin correo en las 2 fuentes: {len(set(faltantes_ambas))}")
+        try:
+            html = html_bienvenida_estructurados(nombre)
+            resp = enviar_gmail(gmail, email, ASUNTO_BIENVENIDA, html)
+            mid = str(resp.get("id",""))
+            agregar_cola(cola, id_envio, ref, nombre, email, fecha, "ENVIADO", mid)
+            existentes.add(id_envio)
+            enviados += 1
+            print(f"ENVIADO | {ref} | {fecha.strftime('%d/%m/%Y')} | {ocultar_email(email)}")
+        except Exception as exc:
+            errores += 1
+            err = str(exc)[:450]
+            try:
+                agregar_cola(cola, id_envio, ref, nombre, email, fecha, "ERROR", "", err)
+                existentes.add(id_envio)
+            except Exception:
+                pass
+            print(f"ERROR | {ref} | {fecha.strftime('%d/%m/%Y')} | {err}")
 
-    print()
     print("=" * 76)
-    print("RESUMEN DE CALIDAD")
+    print(f"ENVIADOS: {enviados}")
+    print(f"YA REGISTRADOS / DUPLICADOS: {duplicados}")
+    print(f"EXCLUIDOS: {excluidos}")
+    print(f"SIN CORREO: {sin_correo}")
+    print(f"ERRORES: {errores}")
     print("=" * 76)
-    print(f"Estructurados únicos/eventos encontrados: {len(estructurados)}")
-    print(f"Con correo válido: {total_con_email}")
-    print(f"  - Desde Info_Clientes_V2: {correos_desde_info}")
-    print(f"  - Recuperados desde Asignaciones: {correos_desde_asignaciones}")
-    print(f"Sin correo válido: {total_sin_email}")
-    print(f"En Excluir_correo: {total_excluidos}")
-    print()
-    print("DIAGNÓSTICO FINALIZADO.")
-    print("NINGÚN CORREO FUE ENVIADO.")
-    print("NINGUNA FILA FUE AGREGADA O MODIFICADA.")
-    print("=" * 76)
+
+    if errores:
+        raise RuntimeError(f"Finalizó con {errores} error(es) de envío.")
 
 
 if __name__ == "__main__":
