@@ -1437,6 +1437,9 @@ def construir_html_campana(id_plantilla, fila, cuerpo_base=""):
     if idp == ALIANZAS_TEMPLATE_ID:
         return html_alianzas_bravo(fila.get("NOMBRE", ""), fila.get("BANCO", ""))
 
+    if idp in PLANTILLAS_BENEFICIOS:
+        return html_beneficio_bravo(fila.get("NOMBRE", ""), idp)
+
     cuerpo = reemplazar_variables_genericas(cuerpo_base, fila)
     return _html_final_para_preview(cuerpo)
 
@@ -1466,6 +1469,134 @@ def plantilla_alianzas_virtual():
         "ESTADO": "ACTIVA",
     })
 
+
+
+# ============================================================
+# PLANTILLAS BENEFICIOS / ALTERNATIVAS DE PAGO
+# ============================================================
+
+PLANTILLAS_BENEFICIOS = {
+    "DESCINC001": {
+        "ID_PLANTILLA": "DESCINC001",
+        "NOMBRE": "INCOBRABLE · descuento comisión de éxito",
+        "ASUNTO": "Tenemos un beneficio especial para ti | Bravo",
+        "ESTADO": "ACTIVA",
+    },
+    "ALTPAGO001": {
+        "ID_PLANTILLA": "ALTPAGO001",
+        "NOMBRE": "Alternativas de pago · ponte al día",
+        "ASUNTO": "Tenemos alternativas de pago para ti | Bravo",
+        "ESTADO": "ACTIVA",
+    },
+}
+
+
+def plantilla_beneficio_virtual(id_plantilla):
+    idp = str(id_plantilla or "").strip().upper()
+    datos = PLANTILLAS_BENEFICIOS.get(idp)
+    return pd.Series(datos) if datos else None
+
+
+def html_beneficio_bravo(nombre, id_plantilla):
+    import html as _html
+    from urllib.parse import quote as _quote
+
+    nombre = _html.escape(str(nombre or "Cliente").strip() or "Cliente")
+    idp = str(id_plantilla or "").strip().upper()
+
+    if idp == "DESCINC001":
+        etiqueta = "TENEMOS UN BENEFICIO PARA TI"
+        intro = (
+            "Queremos ayudarte a finalizar tus compromisos pendientes con Bravo. "
+            "Por eso, tenemos un <strong>beneficio especial sobre tu comisión de éxito.</strong>"
+        )
+        titulo = "Descuento en tu comisión de éxito"
+        detalle = (
+            "Aprovecha este beneficio para finalizar tu comisión de éxito pendiente "
+            "y quedar a paz y salvo con Bravo."
+        )
+        cierre = "Una oportunidad para cerrar esta etapa."
+        subcierre = "Estamos contigo para ayudarte a finalizar tu proceso."
+        boton = "Quiero aprovechar mi descuento"
+        mensaje_wa = "Hola, quiero conocer el beneficio disponible sobre mi comisión de éxito con Bravo."
+    else:
+        etiqueta = "TENEMOS ALTERNATIVAS PARA TI"
+        intro = "Queremos ayudarte a encontrar una solución para tus compromisos pendientes con Bravo."
+        titulo = "Tenemos alternativas de pago para ti"
+        detalle = (
+            "Conoce las opciones disponibles para ponerte al día "
+            "y avanzar hacia tu paz y salvo con Bravo."
+        )
+        cierre = "Siempre hay un siguiente paso."
+        subcierre = "Estamos contigo para ayudarte a encontrarlo."
+        boton = "Conocer mis alternativas de pago"
+        mensaje_wa = "Hola, quiero conocer las alternativas de pago que tengo disponibles con Bravo."
+
+    whatsapp_url = f"https://wa.me/573012411885?text={_quote(mensaje_wa)}"
+
+    return f'''<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f4f3f9;font-family:Arial,Helvetica,sans-serif;color:#17145c;">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;background:#f4f3f9;border-collapse:collapse;"><tr><td align="center" style="padding:24px 10px;">
+<table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" style="width:600px;max-width:600px;background:#ffffff;border-collapse:separate;border-spacing:0;border-radius:18px;overflow:hidden;">
+
+<tr><td align="center" style="background:#3e2c96;padding:26px 20px;">
+<img src="{BRAVO_LOGO_URL}" width="150" alt="Bravo" style="display:block;width:150px;height:auto;border:0;margin:auto;">
+</td></tr>
+
+<tr><td align="center" style="padding:34px 40px 10px;">
+<table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr><td align="center" style="background:#eee9ff;color:#4934a5;font-size:12px;line-height:16px;font-weight:bold;padding:9px 18px;border-radius:20px;">{etiqueta}</td></tr></table>
+<div style="margin-top:20px;font-size:29px;line-height:35px;font-weight:800;color:#17145c;">¡Hola, {nombre}! &#128075;</div>
+<div style="margin-top:16px;font-size:15px;line-height:24px;color:#4d4969;">{intro}</div>
+</td></tr>
+
+<tr><td style="padding:22px 40px 10px;">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#f1edff;border-radius:18px;">
+<tr><td align="center" style="padding:30px 25px;">
+<div style="font-size:13px;font-weight:bold;color:#6156a6;letter-spacing:.5px;">QUEREMOS AYUDARTE</div>
+<div style="margin-top:11px;font-size:26px;line-height:32px;font-weight:800;color:#3e2c96;">{titulo}</div>
+<div style="margin-top:10px;font-size:15px;line-height:23px;color:#514c72;">{detalle}</div>
+</td></tr></table>
+</td></tr>
+
+<tr><td style="padding:20px 40px 4px;">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+<tr><td style="background:#f8f7fc;border-radius:14px;padding:19px 22px;">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr>
+<td width="42" valign="top" style="font-size:21px;color:#3e2c96;">&#10003;</td>
+<td><div style="font-size:16px;font-weight:bold;color:#17145c;">Encuentra una solución</div>
+<div style="margin-top:5px;font-size:13px;line-height:20px;color:#625e7a;">Nuestro equipo puede revisar contigo las opciones disponibles para resolver tus compromisos pendientes.</div></td>
+</tr></table></td></tr>
+<tr><td height="12"></td></tr>
+<tr><td style="background:#f8f7fc;border-radius:14px;padding:19px 22px;">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr>
+<td width="42" valign="top" style="font-size:21px;color:#3e2c96;">&#10003;</td>
+<td><div style="font-size:16px;font-weight:bold;color:#17145c;">Avanza con Bravo</div>
+<div style="margin-top:5px;font-size:13px;line-height:20px;color:#625e7a;">Da el siguiente paso para ponerte al día o avanzar hacia tu paz y salvo con Bravo.</div></td>
+</tr></table></td></tr>
+</table>
+</td></tr>
+
+<tr><td align="center" style="padding:28px 40px 34px;">
+<div style="margin-bottom:17px;font-size:14px;line-height:22px;color:#5e5a78;">Escríbenos para conocer las condiciones y opciones disponibles. Nuestro equipo está listo para ayudarte.</div>
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td align="center" bgcolor="#16c477" style="border-radius:12px;">
+<a href="{whatsapp_url}" target="_blank" style="display:block;padding:16px 18px;color:#ffffff;text-decoration:none;font-size:16px;line-height:21px;font-weight:bold;">&#128172; &nbsp; {boton}</a>
+</td></tr></table>
+<div style="margin-top:14px;font-size:12px;line-height:18px;color:#77738d;">También puedes escribirnos por WhatsApp al <strong>301 241 1885</strong></div>
+</td></tr>
+
+<tr><td align="center" style="background:#eeeaff;padding:22px 30px;">
+<div style="font-size:16px;font-weight:bold;color:#241778;">{cierre}</div>
+<div style="margin-top:6px;font-size:12px;line-height:18px;color:#625d83;">{subcierre}</div>
+</td></tr>
+
+<tr><td align="center" style="background:#3e2c96;padding:24px 30px;">
+<img src="{BRAVO_LOGO_URL}" width="100" alt="Bravo" style="display:block;width:100px;height:auto;border:0;margin:0 auto 11px;">
+<div style="color:#ffffff;font-size:11px;line-height:17px;">¡Gracias por confiar en nosotros!<br>Equipo Bravo</div>
+</td></tr>
+
+</table></td></tr></table>
+</body></html>'''
 
 
 # ============================================================
@@ -3125,11 +3256,13 @@ def obtener_ids_plantillas_activas():
         if not activas.empty:
             vista = activas
 
-    return sorted({
+    ids = {
         str(x).strip()
         for x in vista["ID_PLANTILLA"].tolist()
         if str(x).strip()
-    })
+    }
+    ids.update(PLANTILLAS_BENEFICIOS.keys())
+    return sorted(ids)
 
 
 def obtener_plantilla_generica(id_plantilla):
@@ -3138,6 +3271,8 @@ def obtener_plantilla_generica(id_plantilla):
         return plantilla_alianzas_virtual()
     if idp in PLANTILLAS_AL_DIA:
         return plantilla_al_dia_virtual(idp)
+    if idp in PLANTILLAS_BENEFICIOS:
+        return plantilla_beneficio_virtual(idp)
     if plantillas.empty or "ID_PLANTILLA" not in plantillas.columns:
         return None
 
@@ -3183,6 +3318,8 @@ def nombre_plantilla_visible(id_plantilla):
         "PAB003": "Pago a banco · 3 días antes",
         "ALDIA000": "Cliente al día · apartado mensual hoy",
         "ALDIA003": "Cliente al día · 3 días antes",
+        "DESCINC001": "INCOBRABLE · descuento comisión de éxito",
+        "ALTPAGO001": "Alternativas de pago · ponte al día",
         "T001": "1 día en mora",
         "T030": "30 días en mora",
         "T060": "60 días en mora",
@@ -7143,7 +7280,7 @@ elif menu == "📝 Plantillas":
         st.info("No hay plantillas disponibles para previsualizar.")
     else:
         ids_plantilla = [str(x).strip() for x in plantillas["ID_PLANTILLA"].tolist() if str(x).strip()]
-        ids_plantilla.extend([ALIANZAS_TEMPLATE_ID, "ALDIA003", "ALDIA000"])
+        ids_plantilla.extend([ALIANZAS_TEMPLATE_ID, "ALDIA003", "ALDIA000", "DESCINC001", "ALTPAGO001"])
         ids_plantilla = list(dict.fromkeys(ids_plantilla))
         st.divider()
         st.subheader("👁️ Vista previa de plantilla")
@@ -7167,6 +7304,10 @@ elif menu == "📝 Plantillas":
                     "25/09/2026",
                     dias_preview
                 )
+            elif id_upper in {"DESCINC001", "ALTPAGO001"}:
+                fila_preview = plantilla_beneficio_virtual(id_upper)
+                asunto_preview = str(fila_preview.get("ASUNTO", "")).strip()
+                html_preview = html_beneficio_bravo("Cliente de ejemplo", id_upper)
             elif id_upper in {"PAB000", "PAB003"}:
                 dias_preview = 0 if id_upper == "PAB000" else 3
                 datos_demo = {"NOMBRE":"Dioben Jesus Araujo Hernandez","REFERENCIA":"PRUEBA-001","FECHA_PAB":"18/09/2026","VALOR_PAB":1000000}
