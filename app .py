@@ -36,7 +36,7 @@ import secrets
 _RETRIABLE_HTTP_CODES = {429, 500, 502, 503, 504}
 
 
-def _retry(fn, label="", tries=4, base_sleep=0.8, jitter=0.4, max_sleep=6):
+def _retry(fn, label="", tries=10, base_sleep=1.5, jitter=0.6, max_sleep=45):
     last_err = None
 
     for i in range(tries):
@@ -3722,12 +3722,22 @@ def _buscar_fila_campana_en_sheet(hoja_camp, id_campana):
 
 
 def _actualizar_campos_campana(id_campana, cambios):
+    """Actualiza varios campos de CAMPAÑAS en UNA sola petición a Sheets."""
     archivo = obtener_archivo()
     hoja_camp = archivo.worksheet("CAMPAÑAS")
     fila_obj, encabezados = _buscar_fila_campana_en_sheet(hoja_camp, id_campana)
+
+    data = []
     for encabezado, valor in cambios.items():
         if encabezado in encabezados:
-            hoja_camp.update_cell(fila_obj, encabezados.index(encabezado) + 1, valor)
+            col = encabezados.index(encabezado) + 1
+            data.append({
+                "range": gspread.utils.rowcol_to_a1(fila_obj, col),
+                "values": [[valor]],
+            })
+
+    if data:
+        hoja_camp.batch_update(data, value_input_option="USER_ENTERED")
 
 
 def programar_campana_segura(id_campana):
@@ -3895,11 +3905,16 @@ def borrar_campana_segura(id_campana):
     return len(filas_borrar_cola)
 
 
-def enviar_campana_ahora_gmail(id_campana, credenciales):
+def enviar_campana_ahora_gmail(id_campana, credenciales, tamano_lote=10):
     """
-    Envía SOLO la campaña indicada. Requiere estado PROGRAMADA y que todas
-    sus filas pendientes estén todavía en BORRADOR. La fecha programada no
-    limita este botón: es una orden manual explícita de 'Enviar ahora'.
+    Envía SOLO la campaña indicada. Requiere estado PROGRAMADA.
+
+    Para evitar el límite de escritura de Google Sheets:
+    - reserva hasta `tamano_lote` filas con UN batch_update;
+    - envía Gmail fila por fila;
+    - registra todo el resultado del lote con UN batch_update.
+
+    Las llamadas gspread pasan además por el retry global para 429/5xx.
     """
     if credenciales is None:
         raise ValueError(
@@ -3911,8 +3926,8 @@ def enviar_campana_ahora_gmail(id_campana, credenciales):
         raise ValueError("No encontré la campaña seleccionada.")
 
     estado_camp = str(fila.get("ESTADO", "")).strip().upper()
-    if estado_camp != "PROGRAMADA":
-        raise ValueError("Solo una campaña PROGRAMADA puede enviarse.")
+    if estado_camp not in {"PROGRAMADA", "EN PROCESO"}:
+        raise ValueError("Solo una campaña PROGRAMADA o EN PROCESO puede enviarse.")
 
     archivo = obtener_archivo()
     hoja = archivo.worksheet("COLA_ENVIO")
@@ -3939,8 +3954,8 @@ def enviar_campana_ahora_gmail(id_campana, credenciales):
         est = str(f[idx["ESTADO"]] if len(f) > idx["ESTADO"] else "").strip().upper()
         if est == "BORRADOR":
             filas_objetivo.append((numero_fila, f))
-        elif est in {"ENVIADO", "ERROR", "BLOQUEADO"}:
-            # Ya procesados: no se vuelven a enviar.
+        elif est in {"ENVIADO", "ERROR", "BLOQUEADO", "ENVIANDO"}:
+            # Nunca reenviar automáticamente filas ya procesadas o reservadas.
             continue
         else:
             raise ValueError(
@@ -3956,49 +3971,87 @@ def enviar_campana_ahora_gmail(id_campana, credenciales):
     enviados = 0
     errores = 0
     detalle = []
+    tamano_lote = max(1, min(int(tamano_lote or 10), 25))
 
-    for numero_fila, f in filas_objetivo:
-        def val(c):
-            i = idx[c]
-            return str(f[i] if len(f) > i else "").strip()
+    for inicio in range(0, len(filas_objetivo), tamano_lote):
+        lote = filas_objetivo[inicio:inicio + tamano_lote]
 
-        id_envio = val("ID_ENVIO")
-        email = val("EMAIL")
-        asunto = val("ASUNTO")
-        cuerpo = val("CUERPO")
-        intentos_previos = entero_seguro(val("INTENTOS"), 0)
-
-        # Reserva la fila antes de Gmail para impedir doble envío concurrente.
-        hoja.update_cell(numero_fila, idx["ESTADO"] + 1, "ENVIANDO")
-        hoja.update_cell(numero_fila, idx["INTENTOS"] + 1, intentos_previos + 1)
-
-        try:
-            respuesta = enviar_mensaje_gmail(
-                credenciales=credenciales,
-                destinatario=email,
-                asunto=asunto,
-                cuerpo_html=cuerpo,
+        # 1) Reservar TODO el lote en una sola petición a Sheets.
+        cambios_reserva = []
+        for numero_fila, f in lote:
+            intentos_previos = entero_seguro(
+                str(f[idx["INTENTOS"]] if len(f) > idx["INTENTOS"] else "").strip(), 0
             )
-            gmail_id = str(respuesta.get("id", "")).strip()
-            fecha_envio = datetime.now(TZ).strftime("%d/%m/%Y %H:%M:%S")
+            cambios_reserva.extend([
+                {
+                    "range": f"{gspread.utils.rowcol_to_a1(numero_fila, idx['ESTADO'] + 1)}",
+                    "values": [["ENVIANDO"]],
+                },
+                {
+                    "range": f"{gspread.utils.rowcol_to_a1(numero_fila, idx['INTENTOS'] + 1)}",
+                    "values": [[intentos_previos + 1]],
+                },
+            ])
+        hoja.batch_update(cambios_reserva, value_input_option="USER_ENTERED")
 
-            hoja.update_cell(numero_fila, idx["FECHA_ENVIO"] + 1, fecha_envio)
-            hoja.update_cell(numero_fila, idx["ID_MENSAJE"] + 1, gmail_id)
-            hoja.update_cell(numero_fila, idx["ERROR"] + 1, "")
-            hoja.update_cell(numero_fila, idx["ESTADO"] + 1, "ENVIADO")
-            enviados += 1
-            detalle.append({"EMAIL": email, "RESULTADO": "ENVIADO"})
-        except Exception as e:
-            hoja.update_cell(numero_fila, idx["ERROR"] + 1, str(e)[:500])
-            hoja.update_cell(numero_fila, idx["ESTADO"] + 1, "ERROR")
-            errores += 1
-            detalle.append({"EMAIL": email, "RESULTADO": f"ERROR: {e}"})
+        # 2) Gmail se ejecuta una vez por destinatario. No se mete dentro de _retry.
+        resultados_lote = []
+        for numero_fila, f in lote:
+            def val(c):
+                i = idx[c]
+                return str(f[i] if len(f) > i else "").strip()
+
+            email = val("EMAIL")
+            asunto = val("ASUNTO")
+            cuerpo = val("CUERPO")
+
+            try:
+                respuesta = enviar_mensaje_gmail(
+                    credenciales=credenciales,
+                    destinatario=email,
+                    asunto=asunto,
+                    cuerpo_html=cuerpo,
+                )
+                gmail_id = str(respuesta.get("id", "")).strip()
+                fecha_envio = datetime.now(TZ).strftime("%d/%m/%Y %H:%M:%S")
+                resultados_lote.append((numero_fila, "ENVIADO", fecha_envio, gmail_id, ""))
+                enviados += 1
+                detalle.append({"EMAIL": email, "RESULTADO": "ENVIADO"})
+            except Exception as e:
+                resultados_lote.append((numero_fila, "ERROR", "", "", str(e)[:500]))
+                errores += 1
+                detalle.append({"EMAIL": email, "RESULTADO": f"ERROR: {e}"})
+
+        # 3) Registrar TODO el resultado del lote en una sola petición a Sheets.
+        cambios_resultado = []
+        for numero_fila, estado, fecha_envio, gmail_id, error in resultados_lote:
+            cambios_resultado.extend([
+                {
+                    "range": gspread.utils.rowcol_to_a1(numero_fila, idx["FECHA_ENVIO"] + 1),
+                    "values": [[fecha_envio]],
+                },
+                {
+                    "range": gspread.utils.rowcol_to_a1(numero_fila, idx["ID_MENSAJE"] + 1),
+                    "values": [[gmail_id]],
+                },
+                {
+                    "range": gspread.utils.rowcol_to_a1(numero_fila, idx["ERROR"] + 1),
+                    "values": [[error]],
+                },
+                {
+                    "range": gspread.utils.rowcol_to_a1(numero_fila, idx["ESTADO"] + 1),
+                    "values": [[estado]],
+                },
+            ])
+        hoja.batch_update(cambios_resultado, value_input_option="USER_ENTERED")
+
+        # Dar margen a la cuota por usuario de Google Sheets entre lotes.
+        # Gmail no se reintenta ni se repite: esta pausa ocurre DESPUÉS de
+        # registrar el resultado del lote.
+        if inicio + tamano_lote < len(filas_objetivo):
+            sleep(2.0)
 
     _recalcular_campana_desde_cola(id_campana)
-    # No vaciar todo el caché aquí: hacerlo obligaba a releer CLIENTES, PRUEBAS,
-    # CAMPAÑAS, COLA_ENVIO, RESPUESTAS, PAB_PROXIMOS y PLANTILLAS justo después
-    # del envío y era la principal causa del 429. El botón Actualizar datos
-    # sigue permitiendo refrescar manualmente cuando sea necesario.
 
     return {
         "enviados": enviados,
@@ -4006,33 +4059,6 @@ def enviar_campana_ahora_gmail(id_campana, credenciales):
         "detalle": detalle,
     }
 
-
-
-# ============================================================
-# ESCRITURA RESPUESTAS
-# ============================================================
-
-def buscar_fila_respuesta_por_id(
-    hoja,
-    id_respuesta
-):
-
-    valores = hoja.col_values(1)
-
-    id_buscado = str(
-        id_respuesta
-    ).strip()
-
-    for numero_fila, valor in enumerate(
-        valores,
-        start=1
-    ):
-
-        if str(valor).strip() == id_buscado:
-
-            return numero_fila
-
-    return None
 
 
 def guardar_comentario(
