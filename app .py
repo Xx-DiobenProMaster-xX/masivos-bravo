@@ -3156,16 +3156,28 @@ def _fecha_desde_nombre_pestana(nombre):
     except Exception: return None
 
 def obtener_pestana_alianzas_mas_reciente():
-    # Temporalmente usamos la pestaña confirmada por operación.
-    # Más adelante podemos volver a detección automática cuando cambie la estructura.
-    nombre_objetivo = "17_09"
-    libro = obtener_gc().open_by_key(ALIANZAS_SOURCE_SPREADSHEET_ID)
-    disponibles = [str(ws.title).strip() for ws in libro.worksheets()]
+    """
+    Pestaña que actualmente contiene la base de clientes
+    para la campaña de Alianzas.
+    """
+    nombre_objetivo = "01_10"
+
+    libro = obtener_gc().open_by_key(
+        ALIANZAS_SOURCE_SPREADSHEET_ID
+    )
+
+    disponibles = [
+        str(ws.title).strip()
+        for ws in libro.worksheets()
+    ]
+
     if nombre_objetivo not in disponibles:
         raise ValueError(
-            f"No encontré la pestaña {nombre_objetivo} en Masivos_Descuento. "
+            f"No encontré la pestaña {nombre_objetivo} "
+            f"en Masivos_Descuento. "
             f"Pestañas disponibles: {', '.join(disponibles)}"
         )
+
     return nombre_objetivo
 
 def leer_fuente_alianzas():
@@ -6230,10 +6242,10 @@ elif menu == "🤝 Alianzas":
     ])
 
     with tab_base_alianzas:
-        st.info(
-            "Fuente: Masivos_Descuento · pestaña actual: 17_09. "
-            "La sincronización carga Referencia, Cédula, Banco, Correo y Nombre Limpio."
-        )
+       st.info(
+    "Fuente: Masivos_Descuento · pestaña actual: 01_10. "
+    "La sincronización carga Referencia, Cédula, Banco, Correo y Nombre Limpio."
+)
 
         if st.button(
             "🔄 Sincronizar base de Alianzas",
