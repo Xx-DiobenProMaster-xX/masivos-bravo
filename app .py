@@ -6247,7 +6247,7 @@ elif menu == "🤝 Alianzas":
     "La sincronización carga Referencia, Cédula, Banco, Correo y Nombre Limpio."
 )
 
-        if st.button(
+    if st.button(
             "🔄 Sincronizar base de Alianzas",
             type="primary",
             use_container_width=True,
