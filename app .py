@@ -6241,7 +6241,7 @@ elif menu == "🤝 Alianzas":
         "💬 Respuestas Alianzas",
     ])
 
-       with tab_base_alianzas:
+    with tab_base_alianzas:
         st.info(
             "Fuente: Masivos_Descuento · pestaña actual: 01_10. "
             "La sincronización carga Referencia, Cédula, Banco, Correo y Nombre Limpio."
@@ -6264,11 +6264,6 @@ elif menu == "🤝 Alianzas":
                     f"❌ No pude sincronizar Alianzas: {e}"
                 )
 
-        if alianzas.empty:
-            st.warning(
-                "La hoja ALIANZAS todavía está vacía. Sincronízala primero."
-            )
-        else:
         if alianzas.empty:
             st.warning("La hoja ALIANZAS todavía está vacía. Sincronízala primero.")
         else:
