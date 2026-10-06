@@ -150,6 +150,7 @@ HOJA_CARTERA_BEREX = "2. Cartera Berex"
 ALIANZAS_SOURCE_SPREADSHEET_ID = "1BO59uLIIPwkLcz3LmVEiM7_9IewAzabfBmztbcpYS_c"
 HOJA_ALIANZAS_DESTINO = "ALIANZAS"
 ALIANZAS_TEMPLATE_ID = "TAL001"
+PREVENCION_TEMPLATE_ID = "TPREV001"
 MORA_ESTADOS_SPREADSHEET_ID = "1jcPPhtF2YK3Kr7P_A0Mgh2OqhOfnVWB2to3UPoSH5tE"
 HOJA_MORA_COMISION = "Comisión"
 UNIDOS_EST_SPREADSHEET_ID = "15sbBsZcMj8PMkHXByLqjcuqtvsY_2FGYiwhkKPmfIYM"
@@ -1424,6 +1425,39 @@ def html_mora_bravo(nombre, mora, id_plantilla="T001"):
 </table></td></tr></table></body></html>'''
 
 
+def plantilla_prevencion_virtual():
+    return pd.Series({
+        "ID_PLANTILLA": PREVENCION_TEMPLATE_ID,
+        "NOMBRE": "Prevención · próximo pago",
+        "ASUNTO": "Tu próximo pago está cerca | Bravo",
+        "CUERPO": "",
+        "ESTADO": "ACTIVA",
+    })
+
+
+def html_prevencion_bravo(nombre, fecha_proximo_pago):
+    """Plantilla preventiva manual. No decide destinatarios ni automatiza envíos."""
+    import html as _html
+    nombre = _html.escape(str(nombre or "Cliente").strip() or "Cliente")
+    fecha_txt = _html.escape(fecha_larga_pab(fecha_proximo_pago) or "Fecha por confirmar")
+    wa_ayuda = f"https://wa.me/{BRAVO_WHATSAPP}?text=" + requests.utils.quote("Hola, necesito ayuda con mi próximo pago de Bravo.")
+    return f'''<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f4f5f9;font-family:Arial,Helvetica,sans-serif;color:#525b82;">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#f4f5f9;width:100%;border-collapse:collapse;"><tr><td align="center" style="padding:18px 8px;">
+<table role="presentation" width="700" cellspacing="0" cellpadding="0" border="0" style="width:700px;max-width:700px;background:#fff;border-collapse:collapse;border-top:6px solid #38278f;">
+<tr><td style="padding:26px 48px 10px;"><table role="presentation" width="100%"><tr><td width="68%" align="center"><img src="{BRAVO_LOGO_URL}" width="170" alt="Bravo" style="display:block;width:170px;height:auto;border:0;margin:0 auto 6px;"><div style="font-size:12px;line-height:18px;color:#7a82a1;">Soluciones financieras para un mejor futuro</div></td><td width="32%" align="right" valign="top" style="font-size:12px;line-height:16px;color:#6f789a;font-weight:bold;padding-top:8px;">TU TRANQUILIDAD<br>TAMBIÉN CUENTA</td></tr></table></td></tr>
+<tr><td style="padding:20px 48px 4px;"><table role="presentation" width="100%"><tr><td width="68%" style="font-size:40px;line-height:43px;font-weight:800;letter-spacing:-1px;color:#35238f;">Tu próximo pago<br><span style="color:#08b9bd;">está cerca</span></td><td width="32%" align="center" style="font-size:66px;">&#128197;</td></tr></table></td></tr>
+<tr><td style="padding:12px 48px 10px;font-size:18px;line-height:27px;">Hola <strong style="color:#2d2088;">{nombre},</strong></td></tr>
+<tr><td style="padding:0 48px 22px;font-size:17px;line-height:27px;">Queremos ayudarte a mantener tu proceso al día. Tu próximo pago está programado para:</td></tr>
+<tr><td style="padding:0 48px 22px;"><table role="presentation" width="100%" style="background:#f5f3ff;border-radius:14px;"><tr><td width="82" align="center" style="padding:20px 0;font-size:34px;">&#128197;</td><td style="padding:18px 20px;border-left:1px solid #dcd9f0;"><div style="font-size:14px;color:#596184;">Próxima fecha de pago</div><div style="font-size:24px;line-height:30px;font-weight:800;color:#251780;">{fecha_txt}</div></td></tr></table></td></tr>
+<tr><td style="padding:0 48px 18px;font-size:16px;line-height:25px;">Si todo está listo, puedes confirmarnos que realizarás tu pago. Si tuviste algún inconveniente o necesitas apoyo, escríbenos y revisamos tu caso contigo.</td></tr>
+<tr><td style="padding:4px 48px 10px;"><table role="presentation" width="100%"><tr><td align="center" bgcolor="#08b9bd" style="border-radius:14px;"><a href="https://wa.me/{BRAVO_WHATSAPP}?text=Voy%20a%20realizar%20mi%20pago" style="display:block;padding:17px 22px;color:#fff;text-decoration:none;font-size:18px;font-weight:800;">&#10003; &nbsp; Voy a realizar mi pago</a></td></tr></table></td></tr>
+<tr><td style="padding:4px 48px 28px;"><table role="presentation" width="100%"><tr><td align="center" style="border:2px solid #40318f;border-radius:14px;"><a href="{wa_ayuda}" style="display:block;padding:15px 22px;color:#40318f;text-decoration:none;font-size:18px;font-weight:800;">&#9742; &nbsp; Necesito ayuda con mi pago</a></td></tr></table></td></tr>
+<tr><td style="padding:20px 48px;border-top:1px solid #dfe2ed;"><table role="presentation" width="100%"><tr><td width="34%"><img src="{BRAVO_LOGO_URL}" width="115" alt="Bravo" style="display:block;width:115px;height:auto;border:0;"></td><td width="66%" style="padding-left:24px;border-left:1px solid #dfe2ed;color:#525b82;font-size:12px;line-height:19px;"><strong style="font-size:14px;color:#2d2088;">Bravo S.A.S.</strong><br>&#9742; {BRAVO_WHATSAPP_DISPLAY}<br>Lunes a viernes, 8:00 a.m. - 6:00 p.m.</td></tr></table></td></tr>
+<tr><td height="18" style="height:18px;background:#f3f0ff;border-bottom:5px solid #10bcc6;font-size:0;line-height:0;">&nbsp;</td></tr>
+</table></td></tr></table></body></html>'''
+
+
 def construir_html_campana(id_plantilla, fila, cuerpo_base=""):
     idp = str(id_plantilla or "").strip().upper()
 
@@ -1436,6 +1470,9 @@ def construir_html_campana(id_plantilla, fila, cuerpo_base=""):
 
     if idp == ALIANZAS_TEMPLATE_ID:
         return html_alianzas_bravo(fila.get("NOMBRE", ""), fila.get("BANCO", ""))
+
+    if idp == PREVENCION_TEMPLATE_ID:
+        return html_prevencion_bravo(fila.get("NOMBRE", ""), fila.get("FECHA_PROXIMO_PAGO", ""))
 
     if idp in PLANTILLAS_BENEFICIOS:
         return html_beneficio_bravo(fila.get("NOMBRE", ""), idp)
@@ -3274,6 +3311,7 @@ def obtener_ids_plantillas_activas():
         if str(x).strip()
     }
     ids.update(PLANTILLAS_BENEFICIOS.keys())
+    ids.add(PREVENCION_TEMPLATE_ID)
     return sorted(ids)
 
 
@@ -3281,6 +3319,8 @@ def obtener_plantilla_generica(id_plantilla):
     idp = str(id_plantilla or "").strip().upper()
     if idp == ALIANZAS_TEMPLATE_ID:
         return plantilla_alianzas_virtual()
+    if idp == PREVENCION_TEMPLATE_ID:
+        return plantilla_prevencion_virtual()
     if idp in PLANTILLAS_AL_DIA:
         return plantilla_al_dia_virtual(idp)
     if idp in PLANTILLAS_BENEFICIOS:
@@ -3317,6 +3357,7 @@ def reemplazar_variables_genericas(texto, fila):
         "{{SALDO}}": moneda(numero(fila.get("SALDO", 0))),
         "{{BANCO}}": str(fila.get("BANCO", "")).strip(),
         "{{CEDULA}}": str(fila.get("CEDULA", "")).strip(),
+        "{{FECHA_PROXIMO_PAGO}}": fecha_larga_pab(fila.get("FECHA_PROXIMO_PAGO", "")),
     }
     for variable, valor in reemplazos.items():
         texto = texto.replace(variable, str(valor))
@@ -3337,6 +3378,7 @@ def nombre_plantilla_visible(id_plantilla):
         "T060": "60 días en mora",
         "T090": "90 días en mora",
         "TAL001": "Alianzas · oferta especial",
+        "TPREV001": "Prevención · próximo pago",
     }
     fila = obtener_plantilla_generica(idp)
     if fila is not None:
@@ -3506,6 +3548,7 @@ def preparar_clientes_campana(fila_campana):
         "ENCARGADO": {"ENCARGADO", "PERSONA", "NEGOCIADOR", "RESPONSABLE"},
         "BANCO": {"BANCO", "ENTIDAD", "NOMBRE_BANCO"},
         "CEDULA": {"CEDULA", "DOCUMENTO", "IDENTIFICACION"},
+        "FECHA_PROXIMO_PAGO": {"FECHA_PROXIMO_PAGO", "PROXIMO_PAGO", "FECHA_PAGO", "FECHA_PROX_PAGO"},
     }
     columnas_por_clave = {_clave_columna(c): c for c in base.columns}
     for canonica, posibles in aliases.items():
@@ -7322,7 +7365,7 @@ elif menu == "📝 Plantillas":
         st.info("No hay plantillas disponibles para previsualizar.")
     else:
         ids_plantilla = [str(x).strip() for x in plantillas["ID_PLANTILLA"].tolist() if str(x).strip()]
-        ids_plantilla.extend([ALIANZAS_TEMPLATE_ID, "ALDIA003", "ALDIA000", "DESCINC001", "ALTPAGO001"])
+        ids_plantilla.extend([ALIANZAS_TEMPLATE_ID, PREVENCION_TEMPLATE_ID, "ALDIA003", "ALDIA000", "DESCINC001", "ALTPAGO001"])
         ids_plantilla = list(dict.fromkeys(ids_plantilla))
         st.divider()
         st.subheader("👁️ Vista previa de plantilla")
@@ -7337,6 +7380,11 @@ elif menu == "📝 Plantillas":
                 ejemplo={"NOMBRE":"Cliente de ejemplo","REFERENCIA":"PRUEBA-001","EMAIL":"cliente@ejemplo.com","BANCO":"Banco de ejemplo","ENCARGADO":"Alianzas"}
                 asunto_preview=reemplazar_variables_genericas(fila_preview.get("ASUNTO",""),ejemplo)
                 html_preview=html_alianzas_bravo(ejemplo["NOMBRE"],ejemplo["BANCO"])
+            elif id_upper == PREVENCION_TEMPLATE_ID:
+                fila_preview = plantilla_prevencion_virtual()
+                ejemplo = {"NOMBRE":"Cliente de ejemplo","REFERENCIA":"3176743342","EMAIL":"cliente@ejemplo.com","FECHA_PROXIMO_PAGO":"31/10/2026","ENCARGADO":"Equipo Bravo"}
+                asunto_preview = reemplazar_variables_genericas(fila_preview.get("ASUNTO", ""), ejemplo)
+                html_preview = html_prevencion_bravo(ejemplo["NOMBRE"], ejemplo["FECHA_PROXIMO_PAGO"])
             elif id_upper in {"ALDIA000", "ALDIA003"}:
                 dias_preview = 0 if id_upper == "ALDIA000" else 3
                 fila_preview = plantilla_al_dia_virtual(id_upper)
