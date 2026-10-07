@@ -2,6 +2,7 @@ import os
 import re
 import json
 import base64
+from collections import Counter
 from email.message import EmailMessage
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -15,9 +16,23 @@ from googleapiclient.discovery import build
 
 # ============================================================
 # MODO DIAGNÓSTICO
-# NO ENVÍA CORREOS
-# NO MODIFICA COLA_ENVIO
 # ============================================================
+# ESTA VERSIÓN:
+#
+# - NO ENVÍA CORREOS
+# - NO MODIFICA COLA_ENVIO
+#
+# Sirve para validar:
+#
+# 1. Fechas commission de Cartera
+# 2. Distribución de fechas del mes
+# 3. Referencias con fechas duplicadas/anómalas
+# 4. Candidatos ALDIA003
+# 5. Candidatos ALDIA000
+# 6. Pagos realizados
+# 7. Status del cliente
+# ============================================================
+
 
 TZ = ZoneInfo("America/Bogota")
 
@@ -30,6 +45,7 @@ MASIVOS_SPREADSHEET_ID = (
     "1VGdEUGRDFxBjKRLF1KF7EcHIBf3f8ujtN3iPm6TatjI"
 )
 
+
 UNIDOS_EST_SPREADSHEET_ID = (
     "15sbBsZcMj8PMkHXByLqjcuqtvsY_2FGYiwhkKPmfIYM"
 )
@@ -38,9 +54,9 @@ HOJA_UNIDOS_EST = "Unidos_Est"
 HOJA_EXCLUIR = "Excluir_correo"
 
 
-# ------------------------------------------------------------
+# ============================================================
 # CARTERA
-# ------------------------------------------------------------
+# ============================================================
 
 CARTERA_SPREADSHEET_ID = (
     "13Vf32LzRI2V95dIUqfevzm-ZmsDR3d17UTre_7XJ-UU"
@@ -55,9 +71,9 @@ HOJAS_INFO_CLIENTES_V2 = [
 ]
 
 
-# ------------------------------------------------------------
+# ============================================================
 # DF_MORA_ESTADOS
-# ------------------------------------------------------------
+# ============================================================
 
 DF_MORA_ESTADOS_ID = (
     "1jcPPhtF2YK3Kr7P_A0Mgh2OqhOfnVWB2to3UPoSH5tE"
@@ -66,20 +82,25 @@ DF_MORA_ESTADOS_ID = (
 HOJA_COMISION = "Comisión"
 
 
+# ============================================================
+# GOOGLE
+# ============================================================
+
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
 ]
 
 
-# ------------------------------------------------------------
-# Gmail
+# ============================================================
+# GMAIL
 #
-# Se conservan las funciones porque luego volveremos a
-# activar producción, pero main() NO las utiliza.
-# ------------------------------------------------------------
+# Se conserva para cuando pasemos nuevamente a producción.
+# ESTA VERSIÓN NO UTILIZA GMAIL.
+# ============================================================
 
 GMAIL_FROM = "estructurados@gobravo.com.co"
+
 GMAIL_REPLY_TO = "estructurados@gobravo.com.co"
 
 GMAIL_SCOPES = [
@@ -88,7 +109,7 @@ GMAIL_SCOPES = [
 
 
 # ============================================================
-# NORMALIZACIÓN
+# NORMALIZAR TEXTO
 # ============================================================
 
 def normalizar(texto):
@@ -106,6 +127,10 @@ def normalizar(texto):
         if unicodedata.category(c) != "Mn"
     ).upper()
 
+
+# ============================================================
+# NORMALIZAR REFERENCIA
+# ============================================================
 
 def normalizar_referencia(valor):
 
@@ -130,11 +155,13 @@ def normalizar_referencia(valor):
         return ""
 
     # Ejemplo:
-    # 123456.0
+    # 123456789.0
+
     if re.fullmatch(
         r"[+-]?\d+\.0+",
         texto
     ):
+
         return (
             texto
             .split(".")[0]
@@ -144,10 +171,12 @@ def normalizar_referencia(valor):
     # Ejemplo:
     # 1.234.567
     # 1,234,567
+
     if re.fullmatch(
         r"[+-]?\d{1,3}([.,]\d{3})+",
         texto
     ):
+
         return (
             re.sub(
                 r"[.,]",
@@ -161,6 +190,7 @@ def normalizar_referencia(valor):
         r"[+-]?\d+",
         texto
     ):
+
         return texto.lstrip("+")
 
     try:
@@ -183,7 +213,7 @@ def normalizar_referencia(valor):
 
 
 # ============================================================
-# FECHAS
+# PARSEAR FECHA
 # ============================================================
 
 def parsear_fecha(valor):
@@ -196,11 +226,17 @@ def parsear_fecha(valor):
         return None
 
     formatos = (
+
         "%d/%m/%Y",
+
         "%Y-%m-%d",
+
         "%d/%m/%Y %H:%M:%S",
+
         "%Y-%m-%d %H:%M:%S",
+
         "%d-%m-%Y",
+
     )
 
     for formato in formatos:
@@ -219,7 +255,7 @@ def parsear_fecha(valor):
 
 
 # ============================================================
-# NÚMEROS
+# PARSEAR NÚMERO
 # ============================================================
 
 def parsear_numero(valor):
@@ -239,12 +275,19 @@ def parsear_numero(valor):
 
     try:
 
-        # Ejemplo:
         # 1,234.56
         # 1.234,56
-        if "," in texto and "." in texto:
 
-            if texto.rfind(".") > texto.rfind(","):
+        if (
+            "," in texto
+            and "." in texto
+        ):
+
+            if (
+                texto.rfind(".")
+                >
+                texto.rfind(",")
+            ):
 
                 texto = texto.replace(
                     ",",
@@ -263,7 +306,10 @@ def parsear_numero(valor):
 
             partes = texto.split(",")
 
-            if len(partes[-1]) in (1, 2):
+            if (
+                len(partes[-1])
+                in (1, 2)
+            ):
 
                 texto = (
                     texto
@@ -281,11 +327,12 @@ def parsear_numero(valor):
         return float(texto)
 
     except Exception:
+
         return 0.0
 
 
 # ============================================================
-# VALIDACIÓN CORREO
+# VALIDAR CORREO
 # ============================================================
 
 def correo_valido(valor):
@@ -303,19 +350,23 @@ def correo_valido(valor):
 
 
 # ============================================================
-# GOOGLE SHEETS
+# CLIENTE GOOGLE SHEETS
 # ============================================================
 
 def cliente_sheets():
 
-    if not os.environ.get("MI_JSON"):
+    if not os.environ.get(
+        "MI_JSON"
+    ):
 
         raise RuntimeError(
             "No encontré el Secret MI_JSON."
         )
 
     info = json.loads(
-        os.environ["MI_JSON"]
+        os.environ[
+            "MI_JSON"
+        ]
     )
 
     credenciales = (
@@ -332,28 +383,39 @@ def cliente_sheets():
 
 
 # ============================================================
-# GMAIL
+# CLIENTE GMAIL
 #
-# NO SE USA EN MODO DIAGNÓSTICO
+# NO SE USA EN DIAGNÓSTICO
 # ============================================================
 
 def cliente_gmail():
 
     faltan = [
+
         k
+
         for k in (
+
             "GOOGLE_CLIENT_ID",
+
             "GOOGLE_CLIENT_SECRET",
+
             "GOOGLE_REFRESH_TOKEN",
+
         )
+
         if not os.environ.get(k)
+
     ]
 
     if faltan:
 
         raise RuntimeError(
+
             "Faltan variables Gmail: "
+
             + ", ".join(faltan)
+
         )
 
     cred = OAuthCredentials(
@@ -377,6 +439,7 @@ def cliente_gmail():
         ],
 
         scopes=GMAIL_SCOPES,
+
     )
 
     cred.refresh(
@@ -384,45 +447,65 @@ def cliente_gmail():
     )
 
     return build(
+
         "gmail",
+
         "v1",
+
         credentials=cred,
+
         cache_discovery=False,
+
     )
 
 
 # ============================================================
-# FORMATO FECHA
+# FECHA LARGA
 # ============================================================
 
 def fecha_larga(d):
 
     meses = [
+
         "enero",
+
         "febrero",
+
         "marzo",
+
         "abril",
+
         "mayo",
+
         "junio",
+
         "julio",
+
         "agosto",
+
         "septiembre",
+
         "octubre",
+
         "noviembre",
+
         "diciembre",
+
     ]
 
     return (
+
         f"{d.day} de "
+
         f"{meses[d.month - 1]} de "
+
         f"{d.year}"
+
     )
 
 
 # ============================================================
-# HTML
-#
-# SE CONSERVA SIN CAMBIOS PARA PRODUCCIÓN
+# HTML AL DÍA
 # ============================================================
 
 def html_al_dia(
@@ -455,6 +538,7 @@ def html_al_dia(
         )
 
         fondo = "#e9f7ff"
+
         acento = "#147fd1"
 
     else:
@@ -471,11 +555,14 @@ def html_al_dia(
         )
 
         fondo = "#f1edff"
+
         acento = "#5b45c6"
 
     return f"""
 <!doctype html>
+
 <html>
+
 <body
 style="
 margin:0;
@@ -743,10 +830,9 @@ Equipo Bravo
 
 
 # ============================================================
-# ENVÍO GMAIL
+# ENVIAR GMAIL
 #
-# SE CONSERVA PARA PRODUCCIÓN,
-# PERO NO SE LLAMA EN main()
+# NO SE LLAMA DESDE main()
 # ============================================================
 
 def enviar_gmail(
@@ -804,16 +890,18 @@ def enviar_gmail(
 
 
 # ============================================================
-# MAESTRO DE CLIENTES
+# MAESTRO CLIENTES
 # ============================================================
 
-def cargar_maestro_clientes(gc):
+def cargar_maestro_clientes(
+    gc
+):
 
     """
     Info_Clientes_V2
 
     C = Referencia
-    E = Nombre cliente
+    E = Nombre
     F = Email
     """
 
@@ -822,6 +910,7 @@ def cargar_maestro_clientes(gc):
     )
 
     hoja = None
+
     nombre_encontrado = None
 
     for nombre_hoja in (
@@ -841,30 +930,47 @@ def cargar_maestro_clientes(gc):
             break
 
         except Exception:
+
             continue
+
 
     if hoja is None:
 
         disponibles = [
+
             ws.title
-            for ws in archivo.worksheets()
+
+            for ws in (
+                archivo.worksheets()
+            )
+
         ]
 
         raise RuntimeError(
+
             "No encontré Info_Clientes_V2. "
+
             "Probé: "
+
             + ", ".join(
                 HOJAS_INFO_CLIENTES_V2
             )
+
             + ". Pestañas disponibles: "
-            + ", ".join(disponibles)
+
+            + ", ".join(
+                disponibles
+            )
+
         )
+
 
     valores = hoja.get(
         "C:F"
     )
 
     maestro = {}
+
 
     for fila in valores[1:]:
 
@@ -879,43 +985,69 @@ def cargar_maestro_clientes(gc):
         if not referencia:
             continue
 
+
         nombre = str(
+
             fila[2]
+
             if len(fila) > 2
+
             else ""
+
         ).strip()
 
+
         email = str(
+
             fila[3]
+
             if len(fila) > 3
+
             else ""
+
         ).strip().lower()
 
+
         actual = maestro.get(
+
             referencia,
+
             {
                 "NOMBRE": "",
                 "EMAIL": "",
             },
+
         )
+
 
         if (
             nombre
-            and not actual["NOMBRE"]
+            and not actual[
+                "NOMBRE"
+            ]
         ):
 
-            actual["NOMBRE"] = nombre
+            actual[
+                "NOMBRE"
+            ] = nombre
+
 
         if (
             email
-            and not actual["EMAIL"]
+            and not actual[
+                "EMAIL"
+            ]
         ):
 
-            actual["EMAIL"] = email
+            actual[
+                "EMAIL"
+            ] = email
+
 
         maestro[
             referencia
         ] = actual
+
 
     print(
         "Fuente clientes encontrada: "
@@ -932,8 +1064,8 @@ def cargar_maestro_clientes(gc):
 
 
 # ============================================================
-# NUEVA LÓGICA
-# CARTERA -> COMMISSION DEL MES ACTUAL
+# CARTERA
+# COMMISSION DEL MES ACTUAL
 # ============================================================
 
 def cargar_commission_mes_actual(
@@ -948,25 +1080,18 @@ def cargar_commission_mes_actual(
     F = destination
     G = payment_date
 
-    REGLA:
 
-    - destination = commission
-    - payment_date debe pertenecer
-      al MES ACTUAL
-    - payment_date debe pertenecer
-      al AÑO ACTUAL
+    Solo tomamos:
 
-    NO importa si es fin de mes.
+    destination = commission
 
-    Ejemplo:
+    Y:
 
-    Hoy = octubre 2026
+    payment_date.year = año actual
+    payment_date.month = mes actual
 
-    30/09/2026 -> NO
-    09/10/2026 -> SÍ
-    15/10/2026 -> SÍ
-    31/10/2026 -> SÍ
-    30/11/2026 -> NO
+
+    NO exigimos fin de mes.
     """
 
     archivo = gc.open_by_key(
@@ -981,32 +1106,50 @@ def cargar_commission_mes_actual(
         "A:G"
     )
 
+
     fechas_por_ref = {}
+
 
     for fila in valores[1:]:
 
         referencia = (
             normalizar_referencia(
+
                 fila[0]
+
                 if len(fila) > 0
+
                 else ""
+
             )
         )
 
+
         destination = str(
+
             fila[5]
+
             if len(fila) > 5
+
             else ""
+
         ).strip().lower()
 
+
         fecha_pago = parsear_fecha(
+
             fila[6]
+
             if len(fila) > 6
+
             else ""
+
         )
+
 
         if not referencia:
             continue
+
 
         if (
             destination
@@ -1014,12 +1157,10 @@ def cargar_commission_mes_actual(
         ):
             continue
 
+
         if not fecha_pago:
             continue
 
-        # ----------------------------------------
-        # SOLO MES/AÑO ACTUAL
-        # ----------------------------------------
 
         if (
             fecha_pago.year
@@ -1027,49 +1168,54 @@ def cargar_commission_mes_actual(
         ):
             continue
 
+
         if (
             fecha_pago.month
             != hoy.month
         ):
             continue
 
+
         fechas_por_ref.setdefault(
+
             referencia,
+
             set(),
+
         ).add(
             fecha_pago
         )
 
+
     fechas_validas = {}
+
     anomalas = {}
+
 
     for (
         referencia,
         fechas_ref,
     ) in fechas_por_ref.items():
 
+
         ordenadas = sorted(
             fechas_ref
         )
 
-        # Una única fecha
-        # commission este mes
+
         if len(ordenadas) == 1:
 
             fechas_validas[
                 referencia
             ] = ordenadas[0]
 
-        # Más de una fecha diferente
-        # en el mismo mes.
-        #
-        # Por seguridad NO decidimos
-        # automáticamente cuál utilizar.
+
         else:
 
             anomalas[
                 referencia
             ] = ordenadas
+
 
     return (
         fechas_validas,
@@ -1078,8 +1224,8 @@ def cargar_commission_mes_actual(
 
 
 # ============================================================
-# VALIDACIÓN DE PAGOS
-# DF_MORA_ESTADOS -> COMISIÓN
+# DF_MORA_ESTADOS
+# VALIDAR PAGO DEL MES
 # ============================================================
 
 def cargar_validacion_comision(
@@ -1088,7 +1234,7 @@ def cargar_validacion_comision(
 ):
 
     """
-    Hoja Comisión
+    Comisión
 
     A = REFERENCIA
     B = FECHA
@@ -1097,16 +1243,10 @@ def cargar_validacion_comision(
     I = FECHA_COBRO
     N = MORA_STATUS
 
-    Solamente analizamos el mes/año actual.
 
-    Una referencia se considera cubierta
-    cuando:
+    Se considera cubierto cuando:
 
-    PAGO >= X_COBRAR - 100 COP
-
-    La tolerancia de 100 COP evita que
-    diferencias mínimas generen un correo
-    incorrecto.
+    PAGO >= X_COBRAR - 100
     """
 
     archivo = gc.open_by_key(
@@ -1121,36 +1261,51 @@ def cargar_validacion_comision(
         "A:N"
     )
 
+
     resumen = {}
+
 
     for fila in valores[1:]:
 
+
         referencia = (
             normalizar_referencia(
+
                 fila[0]
+
                 if len(fila) > 0
+
                 else ""
+
             )
         )
 
+
         fecha_periodo = parsear_fecha(
+
             fila[1]
+
             if len(fila) > 1
+
             else ""
+
         )
+
 
         if not referencia:
             continue
 
+
         if not fecha_periodo:
             continue
 
-        # Solo periodo actual
+
         if (
             fecha_periodo.year
             != hoy.year
         ):
             continue
+
 
         if (
             fecha_periodo.month
@@ -1158,64 +1313,103 @@ def cargar_validacion_comision(
         ):
             continue
 
+
         x_cobrar = parsear_numero(
+
             fila[2]
+
             if len(fila) > 2
+
             else ""
+
         )
+
 
         pago = parsear_numero(
+
             fila[3]
+
             if len(fila) > 3
+
             else ""
+
         )
+
 
         fecha_cobro = parsear_fecha(
+
             fila[8]
+
             if len(fila) > 8
+
             else ""
+
         )
+
 
         mora_status = str(
+
             fila[13]
+
             if len(fila) > 13
+
             else ""
+
         ).strip()
 
+
         item = resumen.setdefault(
+
             referencia,
+
             {
+
                 "X_COBRAR": 0.0,
+
                 "PAGO": 0.0,
+
                 "FECHA_COBRO": None,
+
                 "MORA_STATUS": "",
+
             },
+
         )
 
-        # Puede haber más de una fila
-        # de la misma referencia.
+
         item[
             "X_COBRAR"
         ] += x_cobrar
+
 
         item[
             "PAGO"
         ] += pago
 
-        # Conservamos la fecha
-        # de cobro más reciente.
+
         if fecha_cobro:
 
             if (
-                item["FECHA_COBRO"]
+
+                item[
+                    "FECHA_COBRO"
+                ]
                 is None
-                or fecha_cobro
-                > item["FECHA_COBRO"]
+
+                or
+
+                fecha_cobro
+                >
+                item[
+                    "FECHA_COBRO"
+                ]
+
             ):
 
                 item[
                     "FECHA_COBRO"
                 ] = fecha_cobro
+
 
         if mora_status:
 
@@ -1223,61 +1417,259 @@ def cargar_validacion_comision(
                 "MORA_STATUS"
             ] = mora_status
 
-    # ----------------------------------------
-    # DEFINIR SI YA CUBRIÓ
-    # ----------------------------------------
 
-    for item in resumen.values():
+    # ========================================================
+    # CUBIERTO
+    # ========================================================
+
+    for item in (
+        resumen.values()
+    ):
+
 
         x_cobrar = item[
             "X_COBRAR"
         ]
 
+
         pago = item[
             "PAGO"
         ]
 
+
         item[
             "CUBIERTO"
         ] = (
+
             x_cobrar > 0
-            and pago
-            >= (
+
+            and
+
+            pago
+            >=
+            (
                 x_cobrar
                 - 100
             )
+
         )
 
+
     return resumen
+
+
+# ============================================================
+# DISTRIBUCIÓN DE FECHAS
+# ============================================================
+
+def mostrar_distribucion_fechas(
+    fechas_mes,
+    hoy,
+):
+
+    print()
+
+    print(
+        "=" * 90
+    )
+
+    print(
+        "DISTRIBUCIÓN DE COMMISSION "
+        "DEL MES"
+    )
+
+    print(
+        "=" * 90
+    )
+
+
+    contador = Counter(
+        fechas_mes.values()
+    )
+
+
+    for fecha in sorted(
+        contador.keys()
+    ):
+
+        cantidad = contador[
+            fecha
+        ]
+
+        dias = (
+            fecha
+            - hoy
+        ).days
+
+
+        if dias < 0:
+
+            estado = (
+                f"PASÓ HACE "
+                f"{abs(dias)} DÍAS"
+            )
+
+
+        elif dias == 0:
+
+            estado = "HOY"
+
+
+        elif dias == 1:
+
+            estado = "MAÑANA"
+
+
+        else:
+
+            estado = (
+                f"FALTAN "
+                f"{dias} DÍAS"
+            )
+
+
+        print(
+
+            f"{fecha.strftime('%d/%m/%Y')}"
+
+            f" | "
+
+            f"{cantidad:>4} referencias"
+
+            f" | "
+
+            f"{estado}"
+
+        )
+
+
+# ============================================================
+# MOSTRAR MUESTRA DE REFERENCIAS
+# ============================================================
+
+def mostrar_muestra_referencias(
+    fechas_mes,
+    maestro,
+    hoy,
+    limite=50,
+):
+
+    print()
+
+    print(
+        "=" * 90
+    )
+
+    print(
+        "MUESTRA DE REFERENCIAS "
+        "Y FECHA COMMISSION"
+    )
+
+    print(
+        "=" * 90
+    )
+
+
+    ordenadas = sorted(
+
+        fechas_mes.items(),
+
+        key=lambda x: (
+            x[1],
+            x[0],
+        )
+
+    )
+
+
+    for (
+        referencia,
+        fecha,
+    ) in ordenadas[:limite]:
+
+
+        cli = maestro.get(
+            referencia,
+            {},
+        )
+
+
+        nombre = str(
+            cli.get(
+                "NOMBRE",
+                "",
+            )
+        ).strip()
+
+
+        if not nombre:
+            nombre = "SIN NOMBRE"
+
+
+        dias = (
+            fecha
+            - hoy
+        ).days
+
+
+        print(
+
+            f"{referencia}"
+
+            f" | "
+
+            f"{fecha.strftime('%d/%m/%Y')}"
+
+            f" | "
+
+            f"{dias:+} días"
+
+            f" | "
+
+            f"{nombre}"
+
+        )
 
 
 # ============================================================
 # IDS EXISTENTES
 #
 # Se conserva para producción.
-# En diagnóstico NO se necesita modificar nada.
 # ============================================================
 
-def cargar_ids_existentes(gc):
+def cargar_ids_existentes(
+    gc
+):
 
     valores = (
+
         gc
+
         .open_by_key(
             MASIVOS_SPREADSHEET_ID
         )
+
         .worksheet(
             "COLA_ENVIO"
         )
+
         .get_all_values()
+
     )
+
 
     if len(valores) <= 1:
         return set()
 
+
     encabezados = [
+
         str(x).strip()
+
         for x in valores[0]
+
     ]
+
 
     if (
         "ID_ENVIO"
@@ -1285,15 +1677,20 @@ def cargar_ids_existentes(gc):
     ):
 
         raise RuntimeError(
+
             "COLA_ENVIO no tiene "
             "la columna ID_ENVIO."
+
         )
+
 
     i_id = encabezados.index(
         "ID_ENVIO"
     )
 
+
     return {
+
         str(
             fila[i_id]
         ).strip()
@@ -1301,11 +1698,19 @@ def cargar_ids_existentes(gc):
         for fila in valores[1:]
 
         if (
-            len(fila) > i_id
-            and str(
+
+            len(fila)
+            >
+            i_id
+
+            and
+
+            str(
                 fila[i_id]
             ).strip()
+
         )
+
     }
 
 
@@ -1315,11 +1720,14 @@ def cargar_ids_existentes(gc):
 
 def main():
 
+
     ahora = datetime.now(
         TZ
     )
 
+
     hoy = ahora.date()
+
 
     print(
         "=" * 90
@@ -1348,7 +1756,7 @@ def main():
 
 
     # ========================================================
-    # CONEXIÓN SHEETS
+    # CONECTAR SHEETS
     # ========================================================
 
     gc = cliente_sheets()
@@ -1362,24 +1770,30 @@ def main():
         UNIDOS_EST_SPREADSHEET_ID
     )
 
+
     exclusiones = {
 
         normalizar_referencia(x)
 
         for x in (
+
             fuente
+
             .worksheet(
                 HOJA_EXCLUIR
             )
+
             .col_values(1)[1:]
+
         )
 
         if normalizar_referencia(x)
+
     }
 
 
     # ========================================================
-    # DATOS CLIENTE
+    # MAESTRO CLIENTES
     # ========================================================
 
     maestro = (
@@ -1390,31 +1804,33 @@ def main():
 
 
     # ========================================================
-    # FECHA COMMISSION
-    # CARTERA
+    # COMMISSION DEL MES
     # ========================================================
 
     (
         fechas_mes,
         anomalas,
     ) = (
+
         cargar_commission_mes_actual(
             gc,
             hoy,
         )
+
     )
 
 
     # ========================================================
     # PAGOS
-    # DF_MORA_ESTADOS
     # ========================================================
 
     pagos_mes = (
+
         cargar_validacion_comision(
             gc,
             hoy,
         )
+
     )
 
 
@@ -1425,10 +1841,33 @@ def main():
         f"{len(fechas_mes)}"
     )
 
+
     print(
         "Referencias con más de una "
         "fecha commission este mes: "
         f"{len(anomalas)}"
+    )
+
+
+    # ========================================================
+    # DISTRIBUCIÓN
+    # ========================================================
+
+    mostrar_distribucion_fechas(
+        fechas_mes,
+        hoy,
+    )
+
+
+    # ========================================================
+    # MUESTRA
+    # ========================================================
+
+    mostrar_muestra_referencias(
+        fechas_mes,
+        maestro,
+        hoy,
+        limite=50,
     )
 
 
@@ -1438,45 +1877,61 @@ def main():
 
     if anomalas:
 
+
         print()
 
         print(
             "=" * 90
         )
 
+
         print(
             "ANOMALÍAS DE FECHA"
         )
+
 
         print(
             "NO SE ENVIARÍAN "
             "AUTOMÁTICAMENTE"
         )
 
+
         print(
             "=" * 90
         )
 
+
         for (
             referencia,
             fechas,
-        ) in list(
-            anomalas.items()
-        )[:50]:
+        ) in anomalas.items():
+
 
             texto_fechas = (
                 ", ".join(
+
                     d.strftime(
                         "%d/%m/%Y"
                     )
+
                     for d in fechas
+
                 )
             )
 
+
             print(
-                "ANOMALIA | "
-                f"{referencia} | "
+
+                "ANOMALIA"
+
+                " | "
+
+                f"{referencia}"
+
+                " | "
+
                 f"{texto_fechas}"
+
             )
 
 
@@ -1500,7 +1955,9 @@ def main():
 
 
     candidatos_hoy = 0
+
     enviar = 0
+
     no_enviar = 0
 
 
@@ -1515,7 +1972,9 @@ def main():
             x[1],
             x[0],
         ),
+
     ):
+
 
         dias = (
             fecha_pago
@@ -1524,16 +1983,14 @@ def main():
 
 
         # ====================================================
-        # REGLA DE ENVÍO
-        #
-        # 3 días antes = ALDIA003
-        # mismo día    = ALDIA000
+        # REGLA RECORDATORIO
         # ====================================================
 
         if dias not in (
             0,
             3,
         ):
+
             continue
 
 
@@ -1547,11 +2004,12 @@ def main():
             if dias == 0
 
             else "ALDIA003"
+
         )
 
 
         # ====================================================
-        # DATOS CLIENTE
+        # CLIENTE
         # ====================================================
 
         cli = maestro.get(
@@ -1559,27 +2017,34 @@ def main():
             {},
         )
 
+
         nombre = str(
+
             cli.get(
                 "NOMBRE",
                 "",
             )
+
         ).strip()
 
+
         if not nombre:
+
             nombre = "Cliente"
 
 
         email = str(
+
             cli.get(
                 "EMAIL",
                 "",
             )
+
         ).strip().lower()
 
 
         # ====================================================
-        # INFORMACIÓN DE PAGO
+        # PAGO
         # ====================================================
 
         pago_info = pagos_mes.get(
@@ -1587,25 +2052,28 @@ def main():
             referencia,
 
             {
+
                 "X_COBRAR": 0.0,
+
                 "PAGO": 0.0,
+
                 "FECHA_COBRO": None,
+
                 "MORA_STATUS": "",
+
                 "CUBIERTO": False,
+
             },
+
         )
 
 
         # ====================================================
-        # DECISIÓN
+        # MOTIVOS NO ENVÍO
         # ====================================================
 
         motivos = []
 
-
-        # ----------------------------------------------------
-        # Exclusión manual
-        # ----------------------------------------------------
 
         if (
             referencia
@@ -1617,10 +2085,6 @@ def main():
             )
 
 
-        # ----------------------------------------------------
-        # Correo inválido
-        # ----------------------------------------------------
-
         if not correo_valido(
             email
         ):
@@ -1629,10 +2093,6 @@ def main():
                 "SIN_CORREO_VALIDO"
             )
 
-
-        # ----------------------------------------------------
-        # Ya pagó
-        # ----------------------------------------------------
 
         if pago_info.get(
             "CUBIERTO",
@@ -1644,24 +2104,29 @@ def main():
             )
 
 
-        # ----------------------------------------------------
-        # Debe estar Al día
-        # ----------------------------------------------------
+        # ====================================================
+        # STATUS
+        # ====================================================
 
         status = normalizar(
+
             pago_info.get(
                 "MORA_STATUS",
                 "",
             )
+
         )
 
+
         if status != "AL DIA":
+
 
             if status:
 
                 motivos.append(
                     "STATUS_NO_AL_DIA"
                 )
+
 
             else:
 
@@ -1671,22 +2136,27 @@ def main():
 
 
         # ====================================================
-        # RESULTADO
+        # DECISIÓN
         # ====================================================
 
         if motivos:
+
 
             decision = (
                 "NO ENVIAR"
             )
 
+
             no_enviar += 1
 
+
         else:
+
 
             decision = (
                 "ENVIAR"
             )
+
 
             enviar += 1
 
@@ -1701,39 +2171,74 @@ def main():
             )
         )
 
+
         if fecha_cobro:
 
+
             fecha_cobro_txt = (
+
                 fecha_cobro.strftime(
                     "%d/%m/%Y"
                 )
+
             )
 
+
         else:
+
 
             fecha_cobro_txt = "-"
 
 
         # ====================================================
-        # MOSTRAR DIAGNÓSTICO
+        # LOG
         # ====================================================
 
         print(
-            f"{decision} | "
-            f"{plantilla} | "
-            f"Ref {referencia} | "
-            f"{nombre} | "
+
+            f"{decision}"
+
+            f" | "
+
+            f"{plantilla}"
+
+            f" | "
+
+            f"Ref {referencia}"
+
+            f" | "
+
+            f"{nombre}"
+
+            f" | "
+
             f"Fecha "
-            f"{fecha_pago.strftime('%d/%m/%Y')} | "
+            f"{fecha_pago.strftime('%d/%m/%Y')}"
+
+            f" | "
+
             f"X_COBRAR "
-            f"{pago_info.get('X_COBRAR', 0):,.2f} | "
+            f"{pago_info.get('X_COBRAR', 0):,.2f}"
+
+            f" | "
+
             f"PAGO "
-            f"{pago_info.get('PAGO', 0):,.2f} | "
+            f"{pago_info.get('PAGO', 0):,.2f}"
+
+            f" | "
+
             f"FECHA_COBRO "
-            f"{fecha_cobro_txt} | "
+            f"{fecha_cobro_txt}"
+
+            f" | "
+
             f"STATUS "
-            f"{pago_info.get('MORA_STATUS', '') or '-'} | "
+            f"{pago_info.get('MORA_STATUS', '') or '-'}"
+
+            f" | "
+
             f"{', '.join(motivos) if motivos else 'OK'}"
+
         )
 
 
@@ -1755,34 +2260,54 @@ def main():
         "=" * 90
     )
 
+
+    print(
+        "Commission válidas del mes: "
+        f"{len(fechas_mes)}"
+    )
+
+
+    print(
+        "Anomalías de fecha: "
+        f"{len(anomalas)}"
+    )
+
+
     print(
         "Candidatos por fecha hoy: "
         f"{candidatos_hoy}"
     )
+
 
     print(
         "Resultado ENVIAR: "
         f"{enviar}"
     )
 
+
     print(
         "Resultado NO ENVIAR: "
         f"{no_enviar}"
     )
 
+
     print()
+
 
     print(
         "MODO DIAGNÓSTICO:"
     )
 
+
     print(
         "0 correos enviados"
     )
 
+
     print(
         "0 filas modificadas"
     )
+
 
     print(
         "=" * 90
@@ -1790,7 +2315,7 @@ def main():
 
 
 # ============================================================
-# EJECUCIÓN
+# EJECUTAR
 # ============================================================
 
 if __name__ == "__main__":
