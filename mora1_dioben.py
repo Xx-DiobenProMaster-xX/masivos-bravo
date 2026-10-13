@@ -56,7 +56,21 @@ def run():
     missing=required-set(hs)
     if missing:raise RuntimeError('Faltan columnas en Seguimiento: '+', '.join(sorted(missing)))
     if not {'REFERENCIA','HABILITADO','TIPO CORREO'}.issubset(hm):raise RuntimeError('Faltan columnas en Masivos_Correos')
-    idx={ref(value(r,hs,'REFERENCIA')):r for r in seguimiento if ref(value(r,hs,'REFERENCIA'))}
+    idx={}
+    duplicates=set()
+    for item in seguimiento:
+        key=ref(value(item,hs,'REFERENCIA'))
+        if not key:continue
+        if key in idx:duplicates.add(key)
+        else:idx[key]=item
+    fechas={'VACIA':0,'INVALIDA':0,'FUTURA':0,'PENDIENTE_CONFIRMACION':0}
+    for key,item in idx.items():
+        raw=value(item,hs,'FECHA_INICIO_MORA_1')
+        parsed=parse_date(raw)
+        if not raw:fechas['VACIA']+=1
+        elif not parsed:fechas['INVALIDA']+=1
+        elif parsed>datetime.now(TZ).date():fechas['FUTURA']+=1
+        else:fechas['PENDIENTE_CONFIRMACION']+=1
     today=datetime.now(TZ).date()
     reasons={}
     examples=[]
@@ -65,7 +79,8 @@ def run():
         if not reference:continue
         s=idx.get(reference)
         reason='ELEGIBLE PARA VALIDAR HISTORICO'
-        if not s:reason='SIN SEGUIMIENTO'
+        if reference in duplicates:reason='REFERENCIA DUPLICADA EN SEGUIMIENTO'
+        elif not s:reason='SIN SEGUIMIENTO'
         elif norm(value(s,hs,'MORA ACTUAL'))!='MORA 1':reason='NO MORA 1'
         elif norm(value(s,hs,'EXCLUIR CORREO')) in {'TRUE','VERDADERO','SI','1','X'}:reason='EXCLUIDO'
         elif norm(value(s,hs,'STATUS')) in ESTADOS_POSITIVOS|ESTADOS_NEUTROS:reason='STATUS BLOQUEADO'
@@ -87,6 +102,8 @@ def run():
     print('Importante: fecha R pendiente de validación contra histórico real de transiciones.')
     for k,v in sorted(reasons.items()):print(k,':',v)
     print('MUESTRA:',examples)
-    print('PENDIENTE: histórico de transiciones, pagos aplicados, registro de envíos y 5 HTML antes de producción.')
+    print('AUDITORIA DE FECHAS (NO CONFIRMADAS):',fechas)
+    print('DUPLICADOS EN SEGUIMIENTO:',len(duplicates))
+    print('PENDIENTE: validar origen historico de la fecha, pagos, COLA_ENVIO y plantillas antes de produccion.')
 
 if __name__=='__main__':run()
