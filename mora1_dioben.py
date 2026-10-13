@@ -1,8 +1,8 @@
 
 """Cartera Dioben: diagnóstico de secuencia Mora 1. NO ENVÍA NI ESCRIBE.
 
-La fecha de inicio requiere una transición histórica confirmada. La fecha R
-se utiliza solo si se ha verificado previamente; no se infiere de ACTUALIZADO.
+Usa FECHA_INICIO_MORA_1 cuando es valida; en su ausencia usa 2026-09-30.
+Modo diagnostico: no envia correos ni cambia las hojas.
 """
 import os
 import json
@@ -16,6 +16,7 @@ from google.oauth2.service_account import Credentials
 ID_DI0BEN = '1ELFN7ONft65RWeeHW5j7e5kvIyzOiG0UFWVeHo9PTLg'
 TZ = ZoneInfo('America/Bogota')
 DIAS_ESPECIALES = {4:'MORA101',10:'MORA102',15:'MORA103',19:'MORA104',24:'MORA105'}
+FECHA_BASE = date(2026,9,30)
 # Estos estados son de referencia; la lista exacta se debe contrastar con Configuración del Apps Script.
 ESTADOS_POSITIVOS = {'PAGO','AL DIA','PERMANECIDO','PROMESA DE PAGO','REESTRUCTURACION','PAGO CONFIRMADO','ACUERDO DE PAGO','PAGO PROGRAMADO','DEBITO PROGRAMADO','CASO SOLUCIONADO'}
 ESTADOS_NEUTROS = {'EN GESTION'}
@@ -83,27 +84,33 @@ def run():
         elif not s:reason='SIN SEGUIMIENTO'
         elif norm(value(s,hs,'MORA ACTUAL'))!='MORA 1':reason='NO MORA 1'
         elif norm(value(s,hs,'EXCLUIR CORREO')) in {'TRUE','VERDADERO','SI','1','X'}:reason='EXCLUIDO'
-        elif norm(value(s,hs,'STATUS')) in ESTADOS_POSITIVOS|ESTADOS_NEUTROS:reason='STATUS BLOQUEADO'
         elif norm(value(r,hm,'HABILITADO')) not in {'SI'}:reason='NO HABILITADO'
         elif norm(value(r,hm,'TIPO CORREO')) not in {'MORA_1','MORA 1'}:reason='OTRA CAMPAÑA'
         else:
-            start=parse_date(value(s,hs,'FECHA_INICIO_MORA_1'))
-            if not start or start>today:reason='INICIO NO CONFIRMADO'
+            fecha_original=parse_date(value(s,hs,'FECHA_INICIO_MORA_1'))
+            start=fecha_original if fecha_original and fecha_original<=today else FECHA_BASE
+            origen='HISTORICO_HOJA' if fecha_original and fecha_original<=today else 'BASE_30_SEPTIEMBRE'
+            if start>today:
+                reason='FECHA POSTERIOR A HOY'
             else:
                 day=(today-start).days+1
                 template=DIAS_ESPECIALES.get(day)
-                # No inferir que el histórico de envíos está vacío: requiere lectura
-                # de COLA_ENVIO antes de habilitar siquiera un envío de prueba.
-                reason=('ESPECIAL '+template if template else 'HABITUAL POR VALIDAR')+' | DIA '+str(day)+' | SIN VERIFICAR HISTORIAL'
+                if template:
+                    tipo='ESPECIAL '+template
+                elif day>=1 and day%2==0:
+                    tipo='HABITUAL'
+                else:
+                    tipo='SIN ENVIO PROGRAMADO'
+                reason=tipo+' | DIA '+str(day)+' | '+origen+' | SIN VERIFICAR COLA_ENVIO'
                 if len(examples)<25:examples.append((reference,reason))
         reasons[reason]=reasons.get(reason,0)+1
     print('CARTERA DIOBEN | DIAGNOSTICO |',datetime.now(TZ).isoformat())
     print('NO SE ENVÍAN CORREOS. NO SE MODIFICAN HOJAS.')
-    print('Importante: fecha R pendiente de validación contra histórico real de transiciones.')
+    print('Fecha valida de Seguimiento o base 2026-09-30; verificar historicidad real por separado.')
     for k,v in sorted(reasons.items()):print(k,':',v)
     print('MUESTRA:',examples)
     print('AUDITORIA DE FECHAS (NO CONFIRMADAS):',fechas)
     print('DUPLICADOS EN SEGUIMIENTO:',len(duplicates))
-    print('PENDIENTE: validar origen historico de la fecha, pagos, COLA_ENVIO y plantillas antes de produccion.')
+    print('PENDIENTE: validar historial de envios COLA_ENVIO, plantillas HTML y credenciales de envio antes de produccion.')
 
 if __name__=='__main__':run()
