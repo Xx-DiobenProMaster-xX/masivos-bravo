@@ -143,7 +143,7 @@ def run():
                 if template and disponibles.get(template)!=1:
                     reason='PLANTILLA FALTANTE, INACTIVA O DUPLICADA: '+template
                 elif template and bloqueo_ciclo(reference,template,start,today):
-                    reason=bloqueo_ciclo(reference,template,start)+' | '+template
+                    reason=bloqueo_ciclo(reference,template,start,today)+' | '+template
                 elif tipo=='SIN ENVIO PROGRAMADO':
                     reason='SIN ENVIO PROGRAMADO | DIA '+str(day)
                 else:
