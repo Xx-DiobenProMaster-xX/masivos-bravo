@@ -25,26 +25,53 @@ SUBJECTS = {
     "MORA105": "Comunícate con nosotros sobre tu pago",
 }
 MESSAGES = {
-    "MORA101": "Te contactamos porque, según nuestro registro, hay una mensualidad pendiente. Si ya realizaste tu pago, puedes omitir este mensaje e informarnos para actualizar tu gestión.",
-    "MORA102": "Queremos dar seguimiento a la mensualidad que aparece pendiente en nuestro registro. Si presentaste alguna novedad o ya pagaste, por favor cuéntanos para poder orientarte.",
-    "MORA103": "Nos gustaría conocer si has tenido algún inconveniente con tu mensualidad pendiente. Estamos disponibles para revisar tu caso y orientarte con los pasos a seguir.",
-    "MORA104": "Continuamos con el seguimiento de tu mensualidad. Si ya pagaste o acordaste una fecha con nuestro equipo, responde a este correo para revisar la información.",
-    "MORA105": "Nos interesa revisar contigo el estado de la mensualidad pendiente. Por favor comunícate con nuestro equipo para resolver cualquier novedad o confirmar tu pago.",
+    "MORA101": "Queremos recordarte que, de acuerdo con nuestros registros, tienes una mensualidad pendiente. Si ya realizaste el pago, puedes responder a este mensaje para que revisemos tu información.",
+    "MORA102": "Te escribimos para hacer seguimiento a la mensualidad que continúa pendiente en nuestros registros. Sabemos que pueden presentarse novedades y queremos conocer tu situación.",
+    "MORA103": "Hemos intentado mantener el seguimiento de tu mensualidad y queremos encontrar contigo la mejor manera de resolver cualquier inconveniente.",
+    "MORA104": "Tu mensualidad sigue apareciendo pendiente en nuestros registros. Nuestro equipo está disponible para revisar tu caso y resolver cualquier novedad.",
+    "MORA105": "Queremos dar continuidad al seguimiento de tu mensualidad pendiente y conocer si necesitas apoyo para regularizar tu situación.",
+}
+CLOSINGS = {
+    "MORA101": "Estamos disponibles para ayudarte si tienes alguna inquietud.",
+    "MORA102": "Si ya realizaste el pago, por favor confírmanoslo respondiendo este mensaje.",
+    "MORA103": "Si necesitas orientación o ya realizaste el pago, cuéntanos por este medio.",
+    "MORA104": "Si tienes una fecha de pago acordada o ya pagaste, puedes informarnos para revisar tu gestión.",
+    "MORA105": "Por favor responde a este mensaje o comunícate por nuestros canales habituales.",
 }
 
 def default_html(code):
-    return (
-        '<div style="font-family:Arial,sans-serif;max-width:620px;margin:auto;color:#263238;'
-        'line-height:1.6;padding:26px;border:1px solid #e3e8ec;border-radius:12px">'
-        '<h2 style="color:#173c64;margin-top:0">Hola, {{nombre}}</h2>'
-        '<p>' + MESSAGES[code] + '</p>'
-        '<p><strong>Referencia:</strong> {{referencia}}</p>'
-        '<p>Si necesitas ayuda, escríbenos a través de nuestros canales habituales.</p>'
-        '<p style="margin-top:30px">Cordialmente,<br><strong>Equipo de atención</strong></p>'
-        '<hr style="border:0;border-top:1px solid #eee">'
-        '<p style="font-size:12px;color:#69757d">Mensaje informativo. '
-        'Si ya realizaste el pago, agradecemos tu confirmación.</p></div>'
-    )
+    """HTML de correo con estilos inline para compatibilidad con clientes de correo."""
+    message = html.escape(MESSAGES[code])
+    closing = html.escape(CLOSINGS[code])
+    subject = html.escape(SUBJECTS[code])
+    day = DAYS[code]
+    return f'''<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:24px;background-color:#edf2f7;font-family:Arial,Helvetica,sans-serif;color:#24364b">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:620px;margin:0 auto;background:#ffffff;border:1px solid #dfe6ed;border-collapse:separate">
+<tr><td style="background:#123456;color:#ffffff;padding:28px 32px">
+<span style="font-size:29px;font-weight:800;letter-spacing:2px">BRAVO</span><br>
+<span style="font-size:11px;letter-spacing:1px;color:#d7e7f3">ACOMPAÑAMIENTO A TU PROCESO</span>
+</td></tr>
+<tr><td style="background:#16b4a0;height:5px;font-size:1px">&nbsp;</td></tr>
+<tr><td style="padding:32px">
+<p style="font-size:11px;letter-spacing:1px;color:#687a8a;margin-top:0">SEGUIMIENTO DE MENSUALIDAD · DÍA {day}</p>
+<h1 style="font-size:24px;line-height:1.3;color:#123456;margin:0 0 25px">{subject}</h1>
+<p style="font-size:15px;line-height:1.7">Hola, <strong>{{{{nombre}}}}</strong>:</p>
+<p style="font-size:15px;line-height:1.7">{message}</p>
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f3f7f8;border-left:4px solid #16b4a0;margin:22px 0"><tr><td style="padding:15px 18px">
+<span style="font-size:11px;color:#667888">REFERENCIA DEL CLIENTE</span><br>
+<strong style="font-size:16px">{{{{referencia}}}}</strong>
+</td></tr></table>
+<p style="font-size:15px;line-height:1.7">{closing}</p>
+<p style="font-size:15px;line-height:1.7">Gracias por mantenernos informados.</p>
+<p style="font-size:15px;line-height:1.7;margin-top:30px">Cordialmente,<br><strong>Equipo BRAVO</strong></p>
+</td></tr>
+<tr><td style="background:#f2f5f7;padding:18px 30px;color:#647581;font-size:12px;line-height:1.5">
+<strong>BRAVO</strong> · Comunicación de seguimiento.<br>
+Si realizaste el pago recientemente, es posible que todavía no se refleje en nuestros registros. Este mensaje no constituye una confirmación de saldo.
+</td></tr>
+</table></body></html>'''
 
 def secret_value(name):
     if os.getenv(name):
