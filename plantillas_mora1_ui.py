@@ -39,39 +39,29 @@ CLOSINGS = {
     "MORA105": "Por favor responde a este mensaje o comunícate por nuestros canales habituales.",
 }
 
+BRAVO_LOGO_URL = "https://drive.google.com/uc?export=view&id=13kK3v4FiyXFa4UzM_au3TllhOhwjvWb7"
+
 def default_html(code):
-    """HTML de correo con estilos inline para compatibilidad con clientes de correo."""
+    """Plantilla BRAVO morado/turquesa; conserva mensaje y cierre."""
+    subject = html.escape(SUBJECTS[code])
     message = html.escape(MESSAGES[code])
     closing = html.escape(CLOSINGS[code])
-    subject = html.escape(SUBJECTS[code])
     day = DAYS[code]
-    return f'''<!doctype html>
-<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:24px;background-color:#edf2f7;font-family:Arial,Helvetica,sans-serif;color:#24364b">
-<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:620px;margin:0 auto;background:#ffffff;border:1px solid #dfe6ed;border-collapse:separate">
-<tr><td style="background:#123456;color:#ffffff;padding:28px 32px">
-<span style="font-size:29px;font-weight:800;letter-spacing:2px">BRAVO</span><br>
-<span style="font-size:11px;letter-spacing:1px;color:#d7e7f3">ACOMPAÑAMIENTO A TU PROCESO</span>
-</td></tr>
-<tr><td style="background:#16b4a0;height:5px;font-size:1px">&nbsp;</td></tr>
-<tr><td style="padding:32px">
-<p style="font-size:11px;letter-spacing:1px;color:#687a8a;margin-top:0">SEGUIMIENTO DE MENSUALIDAD · DÍA {day}</p>
-<h1 style="font-size:24px;line-height:1.3;color:#123456;margin:0 0 25px">{subject}</h1>
-<p style="font-size:15px;line-height:1.7">Hola, <strong>{{{{nombre}}}}</strong>:</p>
-<p style="font-size:15px;line-height:1.7">{message}</p>
-<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f3f7f8;border-left:4px solid #16b4a0;margin:22px 0"><tr><td style="padding:15px 18px">
-<span style="font-size:11px;color:#667888">REFERENCIA DEL CLIENTE</span><br>
-<strong style="font-size:16px">{{{{referencia}}}}</strong>
-</td></tr></table>
-<p style="font-size:15px;line-height:1.7">{closing}</p>
-<p style="font-size:15px;line-height:1.7">Gracias por mantenernos informados.</p>
-<p style="font-size:15px;line-height:1.7;margin-top:30px">Cordialmente,<br><strong>Equipo BRAVO</strong></p>
-</td></tr>
-<tr><td style="background:#f2f5f7;padding:18px 30px;color:#647581;font-size:12px;line-height:1.5">
-<strong>BRAVO</strong> · Comunicación de seguimiento.<br>
-Si realizaste el pago recientemente, es posible que todavía no se refleje en nuestros registros. Este mensaje no constituye una confirmación de saldo.
-</td></tr>
-</table></body></html>'''
+    return f'''<!doctype html><html lang="es"><head><meta charset="utf-8"></head>
+<body style="margin:0;background:#f4f5f9;font-family:Arial,sans-serif;color:#525b82">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td align="center" style="padding:20px">
+<table role="presentation" width="660" cellspacing="0" cellpadding="0" style="max-width:660px;width:100%;background:#fff;border-top:6px solid #38278f">
+<tr><td style="padding:28px 38px"><img src="{BRAVO_LOGO_URL}" alt="Bravo" width="150" style="display:block;border:0;color:#38278f;font-size:24px;font-weight:bold">
+<p style="font-size:12px;color:#737e9c">Soluciones financieras para un mejor futuro</p></td></tr>
+<tr><td style="padding:8px 38px"><small style="color:#747f9e">SEGUIMIENTO DE MENSUALIDAD · DÍA {day}</small>
+<h1 style="color:#35238f;font-size:34px;margin:18px 0 25px">Tu acuerdo<br><span style="color:#08b9bd">necesita atención</span></h1>
+<p style="font-size:17px">Hola <strong style="color:#35238f">{{{{nombre}}}}</strong>,</p>
+<p style="line-height:1.7;font-size:16px">{message}</p></td></tr>
+<tr><td style="padding:12px 38px"><div style="background:#f3f0fc;padding:20px;border-radius:12px"><small>REFERENCIA DEL CLIENTE</small><div style="color:#35238f;font-size:20px;font-weight:bold">{{{{referencia}}}}</div></div></td></tr>
+<tr><td style="padding:12px 38px"><div style="background:#e9fbfc;padding:20px;border-radius:12px"><strong style="color:#08aeb5;font-size:21px">Aún estás a tiempo</strong><p style="line-height:1.7">{closing}</p></div></td></tr>
+<tr><td style="padding:16px 38px 30px"><p>Gracias por mantenernos informados.</p><p>Cordialmente,<br><strong style="color:#35238f">Equipo BRAVO</strong></p><p style="font-size:12px;color:#8087a0">Si ya realizaste el pago, es posible que todavía no se refleje en nuestros registros. Este mensaje no constituye confirmación de saldo.</p></td></tr>
+<tr><td style="background:#f6f5fb;border-bottom:5px solid #10bcc6;padding:18px 38px;font-size:12px"><strong>Bravo S.A.S.</strong> · Comunicación de seguimiento</td></tr>
+</table></td></tr></table></body></html>'''
 
 def secret_value(name):
     if os.getenv(name):
