@@ -64,7 +64,7 @@ def run():
     disponibles={}
     for row in templates:
         code=norm(value(row,hp,'ID_PLANTILLA'))
-        if code in DIAS_ESPECIALES.values() and norm(value(row,hp,'ESTADO'))=='ACTIVA' and value(row,hp,'ASUNTO') and value(row,hp,'CUERPO'):
+        if code in (set(DIAS_ESPECIALES.values()) | {'T001'}) and norm(value(row,hp,'ESTADO'))=='ACTIVA' and value(row,hp,'ASUNTO') and value(row,hp,'CUERPO'):
             disponibles[code]=disponibles.get(code,0)+1
     # Historial por referencia y plantilla. Distinguir enviados, pendientes y errores.
     # Si falta la fecha, bloquear por precaución en vez de asumir otro ciclo.
@@ -77,11 +77,13 @@ def run():
         when=parse_date(value(row,hc,'FECHA_ENVIO')) if 'FECHA_ENVIO' in hc else None
         existentes.setdefault(key,[]).append((estado,when))
     bloqueo_estados={'ENVIADO','ENVIADA','ENVIANDO','PENDIENTE','PROGRAMADO','PROGRAMADA','PREPARADO','PREPARADA','EN COLA','LISTO','LISTA'}
-    def bloqueo_ciclo(reference,template,inicio):
+    def bloqueo_ciclo(reference,template,inicio,today):
         entries=existentes.get((reference,template),[])
+        # T001 se repite cada dos días: solo bloquear si ya fue programado/enviado HOY.
+        cutoff = today if template == 'T001' else inicio
         for estado,fecha in entries:
             if estado in bloqueo_estados:
-                if fecha is None or fecha>=inicio:
+                if fecha is None or fecha>=cutoff:
                     return 'YA ENVIADO O EN COLA EN ESTE CICLO'
             elif estado not in {'ERROR','CANCELADO','CANCELADA','BLOQUEADO','BLOQUEADA','FALLIDO','FALLIDA'}:
                 if fecha is None or fecha>=inicio:
@@ -135,14 +137,13 @@ def run():
                     tipo='ESPECIAL '+template
                 elif day>=1 and day%2==0:
                     tipo='HABITUAL'
+                    template='T001'
                 else:
                     tipo='SIN ENVIO PROGRAMADO'
                 if template and disponibles.get(template)!=1:
                     reason='PLANTILLA FALTANTE, INACTIVA O DUPLICADA: '+template
-                elif template and bloqueo_ciclo(reference,template,start):
-                    reason=bloqueo_ciclo(reference,template,start)+' | '+template
-                elif not template and tipo=='HABITUAL':
-                    reason='HABITUAL SIN PLANTILLA CONFIGURADA: NO APTO PARA ENVIO'
+                elif template and bloqueo_ciclo(reference,template,start,today):
+                    reason=bloqueo_ciclo(reference,template,start,today)+' | '+template
                 elif tipo=='SIN ENVIO PROGRAMADO':
                     reason='SIN ENVIO PROGRAMADO | DIA '+str(day)
                 else:
@@ -158,7 +159,9 @@ def run():
     print('DUPLICADOS EN SEGUIMIENTO:',len(duplicates))
     print('PLANTILLAS ACTIVAS Y COMPLETAS:',disponibles)
     print('PARES REFERENCIA/PLANTILLA EN COLA:',len(existentes))
-    print('SIMULACION SEGURA: los ciclos sin fecha confirmada y los días habituales sin plantilla quedan bloqueados.')
+    print('PROGRAMACION: T001 los dias pares no especiales; MORA101-105 los dias 4,10,15,19,24.')
+    print('T001: evitar reenvios el mismo dia; especiales: evitar reenvios del mismo ciclo.')
+    print('SIMULACION SEGURA: las fechas de inicio de ciclo sin confirmar permanecen bloqueadas.')
     print('PENDIENTE: vincular motor de envío con cuenta autorizada y confirmar deduplicación por ciclo; esta prueba es de solo lectura.')
 
 if __name__=='__main__':run()
