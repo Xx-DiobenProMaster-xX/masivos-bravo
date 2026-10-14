@@ -7357,6 +7357,12 @@ elif menu == "⚠️ Pendientes":
 
 elif menu == "📝 Plantillas":
 
+    # Panel integrado, sin activar envio de correos.
+    from plantillas_mora1_ui import render_plantillas_mora1
+    with st.expander("✉️ Plantillas Mora 1 — MORA101 a MORA105", expanded=True):
+        render_plantillas_mora1()
+
+
     st.title("📝 Plantillas")
     st.caption("Consulta la base de plantillas y valida visualmente el resultado que recibirá el cliente.")
     st.dataframe(plantillas, use_container_width=True, hide_index=True)
