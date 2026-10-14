@@ -148,30 +148,31 @@ def preview_html(source):
         source = source.replace(key, html.escape(sample))
     return source
 
-st.set_page_config(page_title="Plantillas Mora 1", page_icon="✉️", layout="wide")
-st.title("✉️ Plantillas de correos — Mora 1")
-st.info("Aquí solo se editan y guardan plantillas. Esta página NO envía correos.")
-st.caption("Marcadores disponibles: {{nombre}}, {{referencia}}, {{fecha_pago}}, {{valor_pendiente}}. "
-           "Solo se deben utilizar datos verificados antes de enviar.")
+def render_plantillas_mora1():
+    """Panel integrado en el menú Plantillas de Masivos Correos."""
+    st.title("✉️ Plantillas de correos — Mora 1")
+    st.info("Aquí solo se editan y guardan plantillas. Esta página NO envía correos.")
+    st.caption("Marcadores disponibles: {{nombre}}, {{referencia}}, {{fecha_pago}}, {{valor_pendiente}}. "
+               "Solo se deben utilizar datos verificados antes de enviar.")
 
-saved, error = load_saved()
-if error:
-    st.warning("No se pudieron leer las plantillas guardadas. Se muestran borradores locales. "
-               "Revisa MI_JSON y el acceso del servicio a Google Sheets.")
-code = st.selectbox("Selecciona la plantilla", CODES, format_func=lambda c: f"{c} — Día {DAYS[c]}")
-st.caption(f"Campaña especial del día {DAYS[code]} de Mora 1")
-subject = st.text_input("Asunto", value=saved.get(code, {}).get("subject") or SUBJECTS[code], key=f"subject_{code}")
-body = st.text_area("Contenido HTML editable", value=saved.get(code, {}).get("body") or default_html(code),
-                    height=320, key=f"body_{code}")
-st.subheader("Vista previa (datos ficticios)")
-components.html(preview_html(body), height=440, scrolling=True)
-if st.button("Guardar esta plantilla en Google Sheets", type="primary"):
-    if not subject.strip() or not body.strip():
-        st.error("El asunto y el contenido no pueden estar vacíos.")
-    else:
-        try:
-            save_template(code, subject.strip(), body)
-            st.success(f"{code} guardada correctamente en la hoja {SHEET}.")
-        except Exception:
-            st.error("No se pudo guardar. Comprueba MI_JSON, los permisos de edición y la hoja Plantillas_Mora1.")
-st.caption("No habilites envíos en producción hasta verificar destinatarios, exclusiones e historial de mensajes.")
+    saved, error = load_saved()
+    if error:
+        st.warning("No se pudieron leer las plantillas guardadas. Se muestran borradores locales. "
+                   "Revisa MI_JSON y el acceso del servicio a Google Sheets.")
+    code = st.selectbox("Selecciona la plantilla", CODES, format_func=lambda c: f"{c} — Día {DAYS[c]}")
+    st.caption(f"Campaña especial del día {DAYS[code]} de Mora 1")
+    subject = st.text_input("Asunto", value=saved.get(code, {}).get("subject") or SUBJECTS[code], key=f"subject_{code}")
+    body = st.text_area("Contenido HTML editable", value=saved.get(code, {}).get("body") or default_html(code),
+                        height=320, key=f"body_{code}")
+    st.subheader("Vista previa (datos ficticios)")
+    components.html(preview_html(body), height=440, scrolling=True)
+    if st.button("Guardar esta plantilla en Google Sheets", type="primary"):
+        if not subject.strip() or not body.strip():
+            st.error("El asunto y el contenido no pueden estar vacíos.")
+        else:
+            try:
+                save_template(code, subject.strip(), body)
+                st.success(f"{code} guardada correctamente en la hoja {SHEET}.")
+            except Exception:
+                st.error("No se pudo guardar. Comprueba MI_JSON, los permisos de edición y la hoja Plantillas_Mora1.")
+    st.caption("No habilites envíos en producción hasta verificar destinatarios, exclusiones e historial de mensajes.")

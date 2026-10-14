@@ -7357,6 +7357,13 @@ elif menu == "⚠️ Pendientes":
 
 elif menu == "📝 Plantillas":
 
+    # Editor Mora 1 integrado en la sección existente.
+    # No envía correos; solo permite editar y guardar plantillas.
+    with st.expander("✉️ Plantillas Mora 1 · MORA101 a MORA105", expanded=True):
+        from pages.Plantillas_Mora_1 import render_plantillas_mora1
+        render_plantillas_mora1()
+
+
     st.title("📝 Plantillas")
     st.caption("Consulta la base de plantillas y valida visualmente el resultado que recibirá el cliente.")
     st.dataframe(plantillas, use_container_width=True, hide_index=True)
