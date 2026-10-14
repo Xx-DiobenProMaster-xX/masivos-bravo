@@ -7363,6 +7363,46 @@ elif menu == "📝 Plantillas":
         render_plantillas_mora1()
 
 
+    with st.expander("🧪 Prueba controlada de correo Mora 1", expanded=False):
+        st.warning("Este botón envía una única prueba al correo indicado. NO envía a clientes de Cartera Dioben.")
+        codigos_mora_prueba = ["T001", "MORA101", "MORA102", "MORA103", "MORA104", "MORA105"]
+        codigo_mora_prueba = st.selectbox("Plantilla para probar", codigos_mora_prueba, key="mora1_codigo_prueba")
+        destinatario_mora_prueba = st.text_input("Correo de prueba (no cliente)", key="mora1_email_prueba")
+        confirmar_mora_prueba = st.checkbox("Confirmo que este correo es de prueba y autorizo un único envío", key="mora1_confirmar_prueba")
+        if st.button("Enviar prueba de Mora 1", key="mora1_boton_prueba", disabled=not confirmar_mora_prueba):
+            import html as html_seguro
+            from email.utils import parseaddr as parseaddr_seguro
+            correo_limpio = parseaddr_seguro(destinatario_mora_prueba)[1].strip()
+            if not correo_limpio or "@" not in correo_limpio or "\\n" in destinatario_mora_prueba:
+                st.error("Escribe una dirección de correo válida para la prueba.")
+            else:
+                datos_plantilla = obtener_plantilla_generica(codigo_mora_prueba)
+                credenciales_prueba = credenciales_gmail_sesion()
+                if datos_plantilla is None:
+                    st.error("No se encontró la plantilla seleccionada en PLANTILLAS.")
+                elif not credenciales_prueba:
+                    st.error("Conecta tu cuenta de Gmail dentro de Masivos Correos antes de enviar.")
+                else:
+                    asunto_prueba = str(datos_plantilla.get("ASUNTO", "") or "")
+                    cuerpo_prueba = str(datos_plantilla.get("CUERPO", "") or "")
+                    ejemplo_prueba = {"NOMBRE": "Cliente de prueba", "REFERENCIA": "REF-PRUEBA-001"}
+                    asunto_prueba = reemplazar_variables_genericas(asunto_prueba, ejemplo_prueba)
+                    cuerpo_prueba = reemplazar_variables_genericas(cuerpo_prueba, ejemplo_prueba)
+                    if not cuerpo_prueba.strip() or not asunto_prueba.strip():
+                        st.error("La plantilla no tiene asunto o contenido.")
+                    else:
+                        if not re.search(r"<\\s*(html|body|table)\\b", cuerpo_prueba, flags=re.I):
+                            cuerpo_prueba = envolver_html_bravo(cuerpo_prueba)
+                        try:
+                            resultado_prueba = enviar_mensaje_gmail(
+                                credenciales_prueba, correo_limpio,
+                                "[PRUEBA MORA 1] " + asunto_prueba, cuerpo_prueba,
+                            )
+                            st.success("Prueba enviada al correo indicado. Revisa también las imágenes y el logo BRAVO.")
+                            st.caption("Gmail ID: " + str(resultado_prueba.get("id", "")))
+                        except Exception as error_envio:
+                            st.error(f"No se pudo enviar la prueba: {type(error_envio).__name__}: {error_envio}")
+
     st.title("📝 Plantillas")
     st.caption("Consulta la base de plantillas y valida visualmente el resultado que recibirá el cliente.")
     st.dataframe(plantillas, use_container_width=True, hide_index=True)
