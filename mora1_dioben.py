@@ -14,6 +14,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 ID_DI0BEN = '1ELFN7ONft65RWeeHW5j7e5kvIyzOiG0UFWVeHo9PTLg'
+ID_MASIVOS = '1VGdEUGRDFxBjKRLF1KF7EcHIBf3f8ujtN3iPm6TatjI'
 TZ = ZoneInfo('America/Bogota')
 DIAS_ESPECIALES = {4:'MORA101',10:'MORA102',15:'MORA103',19:'MORA104',24:'MORA105'}
 FECHA_BASE = date(2026,9,30)
@@ -53,6 +54,23 @@ def run():
     book=gspread.authorize(creds).open_by_key(ID_DI0BEN)
     hs,seguimiento=rows(book.worksheet('Seguimiento'))
     hm,masivos=rows(book.worksheet('Masivos_Correos'))
+    principal=gspread.authorize(creds).open_by_key(ID_MASIVOS)
+    hp,templates=rows(principal.worksheet('PLANTILLAS'))
+    hc,cola=rows(principal.worksheet('COLA_ENVIO'))
+    if not {'ID_PLANTILLA','ASUNTO','CUERPO','ESTADO'}.issubset(hp):
+        raise RuntimeError('PLANTILLAS: faltan ID_PLANTILLA, ASUNTO, CUERPO o ESTADO')
+    if not {'REFERENCIA','PLANTILLA','ESTADO'}.issubset(hc):
+        raise RuntimeError('COLA_ENVIO: faltan REFERENCIA, PLANTILLA o ESTADO')
+    disponibles={}
+    for row in templates:
+        code=norm(value(row,hp,'ID_PLANTILLA'))
+        if code in DIAS_ESPECIALES.values() and norm(value(row,hp,'ESTADO'))=='ACTIVA' and value(row,hp,'ASUNTO') and value(row,hp,'CUERPO'):
+            disponibles[code]=disponibles.get(code,0)+1
+    existentes=set()
+    for row in cola:
+        estado=norm(value(row,hc,'ESTADO'))
+        if estado not in {'ERROR','CANCELADO','BLOQUEADO'}:
+            existentes.add((ref(value(row,hc,'REFERENCIA')),norm(value(row,hc,'PLANTILLA'))))
     required={'REFERENCIA','MORA ACTUAL','STATUS','EXCLUIR CORREO','FECHA_INICIO_MORA_1'}
     missing=required-set(hs)
     if missing:raise RuntimeError('Faltan columnas en Seguimiento: '+', '.join(sorted(missing)))
@@ -101,7 +119,12 @@ def run():
                     tipo='HABITUAL'
                 else:
                     tipo='SIN ENVIO PROGRAMADO'
-                reason=tipo+' | DIA '+str(day)+' | '+origen+' | SIN VERIFICAR COLA_ENVIO'
+                if template and disponibles.get(template)!=1:
+                    reason='PLANTILLA FALTANTE, INACTIVA O DUPLICADA: '+template
+                elif template and (reference,template) in existentes:
+                    reason='YA REGISTRADO EN COLA_ENVIO: '+template
+                else:
+                    reason=tipo+' | DIA '+str(day)+' | '+origen+' | COLA_VERIFICADA'
                 if len(examples)<25:examples.append((reference,reason))
         reasons[reason]=reasons.get(reason,0)+1
     print('CARTERA DIOBEN | DIAGNOSTICO |',datetime.now(TZ).isoformat())
@@ -111,6 +134,8 @@ def run():
     print('MUESTRA:',examples)
     print('AUDITORIA DE FECHAS (NO CONFIRMADAS):',fechas)
     print('DUPLICADOS EN SEGUIMIENTO:',len(duplicates))
-    print('PENDIENTE: validar historial de envios COLA_ENVIO, plantillas HTML y credenciales de envio antes de produccion.')
+    print('PLANTILLAS ACTIVAS Y COMPLETAS:',disponibles)
+    print('REGISTROS DE COLA VERIFICADOS:',len(existentes))
+    print('PENDIENTE: vincular motor de envío con cuenta autorizada y confirmar deduplicación por ciclo; esta prueba es de solo lectura.')
 
 if __name__=='__main__':run()
