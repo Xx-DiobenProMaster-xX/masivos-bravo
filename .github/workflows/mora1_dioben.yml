@@ -21,3 +21,11 @@ jobs:
           python-version: '3.11'
       - run: pip install gspread google-auth
       - run: python mora1_dioben.py
+      - name: Guardar resumen de simulacion
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mora1-simulacion-resumen
+          path: mora1_simulacion_resumen.json
+          if-no-files-found: warn
+          retention-days: 7
