@@ -66,11 +66,27 @@ def run():
         code=norm(value(row,hp,'ID_PLANTILLA'))
         if code in DIAS_ESPECIALES.values() and norm(value(row,hp,'ESTADO'))=='ACTIVA' and value(row,hp,'ASUNTO') and value(row,hp,'CUERPO'):
             disponibles[code]=disponibles.get(code,0)+1
-    existentes=set()
+    # Historial por referencia y plantilla. Distinguir enviados, pendientes y errores.
+    # Si falta la fecha, bloquear por precaución en vez de asumir otro ciclo.
+    existentes={}
     for row in cola:
+        key=(ref(value(row,hc,'REFERENCIA')), norm(value(row,hc,'PLANTILLA')))
+        if not key[0] or not key[1]:
+            continue
         estado=norm(value(row,hc,'ESTADO'))
-        if estado not in {'ERROR','CANCELADO','BLOQUEADO'}:
-            existentes.add((ref(value(row,hc,'REFERENCIA')),norm(value(row,hc,'PLANTILLA'))))
+        when=parse_date(value(row,hc,'FECHA_ENVIO')) if 'FECHA_ENVIO' in hc else None
+        existentes.setdefault(key,[]).append((estado,when))
+    bloqueo_estados={'ENVIADO','ENVIADA','ENVIANDO','PENDIENTE','PROGRAMADO','PROGRAMADA','PREPARADO','PREPARADA','EN COLA','LISTO','LISTA'}
+    def bloqueo_ciclo(reference,template,inicio):
+        entries=existentes.get((reference,template),[])
+        for estado,fecha in entries:
+            if estado in bloqueo_estados:
+                if fecha is None or fecha>=inicio:
+                    return 'YA ENVIADO O EN COLA EN ESTE CICLO'
+            elif estado not in {'ERROR','CANCELADO','CANCELADA','BLOQUEADO','BLOQUEADA','FALLIDO','FALLIDA'}:
+                if fecha is None or fecha>=inicio:
+                    return 'ESTADO DE COLA NO RECONOCIDO; REVISAR'
+        return None
     required={'REFERENCIA','MORA ACTUAL','STATUS','EXCLUIR CORREO','FECHA_INICIO_MORA_1'}
     missing=required-set(hs)
     if missing:raise RuntimeError('Faltan columnas en Seguimiento: '+', '.join(sorted(missing)))
@@ -108,7 +124,9 @@ def run():
             fecha_original=parse_date(value(s,hs,'FECHA_INICIO_MORA_1'))
             start=fecha_original if fecha_original and fecha_original<=today else FECHA_BASE
             origen='HISTORICO_HOJA' if fecha_original and fecha_original<=today else 'BASE_30_SEPTIEMBRE'
-            if start>today:
+            if not fecha_original or fecha_original>today:
+                reason='FECHA DE CICLO SIN CONFIRMAR: NO APTO PARA ENVIO'
+            elif start>today:
                 reason='FECHA POSTERIOR A HOY'
             else:
                 day=(today-start).days+1
@@ -121,8 +139,10 @@ def run():
                     tipo='SIN ENVIO PROGRAMADO'
                 if template and disponibles.get(template)!=1:
                     reason='PLANTILLA FALTANTE, INACTIVA O DUPLICADA: '+template
-                elif template and (reference,template) in existentes:
-                    reason='YA REGISTRADO EN COLA_ENVIO: '+template
+                elif template and bloqueo_ciclo(reference,template,start):
+                    reason=bloqueo_ciclo(reference,template,start)+' | '+template
+                elif not template and tipo=='HABITUAL':
+                    reason='HABITUAL SIN PLANTILLA CONFIGURADA: NO APTO PARA ENVIO'
                 else:
                     reason=tipo+' | DIA '+str(day)+' | '+origen+' | COLA_VERIFICADA'
                 if len(examples)<25:examples.append((reference,reason))
@@ -135,7 +155,8 @@ def run():
     print('AUDITORIA DE FECHAS (NO CONFIRMADAS):',fechas)
     print('DUPLICADOS EN SEGUIMIENTO:',len(duplicates))
     print('PLANTILLAS ACTIVAS Y COMPLETAS:',disponibles)
-    print('REGISTROS DE COLA VERIFICADOS:',len(existentes))
+    print('PARES REFERENCIA/PLANTILLA EN COLA:',len(existentes))
+    print('SIMULACION SEGURA: los ciclos sin fecha confirmada y los días habituales sin plantilla quedan bloqueados.')
     print('PENDIENTE: vincular motor de envío con cuenta autorizada y confirmar deduplicación por ciclo; esta prueba es de solo lectura.')
 
 if __name__=='__main__':run()
