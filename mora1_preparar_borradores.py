@@ -29,11 +29,15 @@ def main():
         ("Seguimiento",hs,{"REFERENCIA","MORA ACTUAL","EXCLUIR CORREO","FECHA_INICIO_MORA_1"}),
         ("Masivos_Correos",hm,{"REFERENCIA","HABILITADO","TIPO CORREO"}),
         ("PLANTILLAS",hp,{"ID_PLANTILLA","ASUNTO","CUERPO","ESTADO"}),
-        ("COLA_ENVIO",hc,{"ID_ENVIO","ID_CAMPAÑA","REFERENCIA","NOMBRE","EMAIL","PLANTILLA","ASUNTO","CUERPO","ESTADO","FECHA_PROG"}),
+        ("COLA_ENVIO",hc,{"ID_ENVIO","REFERENCIA","NOMBRE","EMAIL","PLANTILLA","ASUNTO","CUERPO","ESTADO","FECHA_PROG"}),
         ("CLIENTES",he,{"REFERENCIA","EMAIL","NOMBRE"}),
     ]:
         if not cols.issubset(h):
             raise RuntimeError(name + ": faltan columnas " + str(sorted(cols-set(h))))
+    if "ID_CAMPAÑA" not in hc:
+        print("AVISO: COLA_ENVIO no tiene ID_CAMPAÑA; se respetará su estructura.")
+        print("Los borradores NO podrán enviarse con el motor actual hasta corregir esa incompatibilidad.")
+    print("Columnas de COLA_ENVIO:", ", ".join(sorted(hc, key=hc.get)))
     hoy=datetime.now(TZ).date()
     bases={}
     duplicadas=set()
