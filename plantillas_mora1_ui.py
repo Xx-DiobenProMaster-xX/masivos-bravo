@@ -152,6 +152,10 @@ def render_plantillas_mora1():
     code = st.selectbox("Selecciona la plantilla", CODES, format_func=lambda c: f"{c} — Día {DAYS[c]}")
     st.caption(f"Campaña especial del día {DAYS[code]} de Mora 1")
     subject = st.text_input("Asunto", value=saved.get(code, {}).get("subject") or SUBJECTS[code], key=f"subject_{code}")
+    def aplicar_diseno_bravo():
+        st.session_state[f"body_{code}"] = default_html(code)
+    st.button("Aplicar diseño corporativo BRAVO a esta plantilla",
+              key=f"diseno_bravo_{code}", on_click=aplicar_diseno_bravo)
     body = st.text_area("Contenido HTML editable", value=saved.get(code, {}).get("body") or default_html(code),
                         height=320, key=f"body_{code}")
     st.subheader("Vista previa (datos ficticios)")
