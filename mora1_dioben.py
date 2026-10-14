@@ -143,6 +143,8 @@ def run():
                     reason=bloqueo_ciclo(reference,template,start)+' | '+template
                 elif not template and tipo=='HABITUAL':
                     reason='HABITUAL SIN PLANTILLA CONFIGURADA: NO APTO PARA ENVIO'
+                elif tipo=='SIN ENVIO PROGRAMADO':
+                    reason='SIN ENVIO PROGRAMADO | DIA '+str(day)
                 else:
                     reason=tipo+' | DIA '+str(day)+' | '+origen+' | COLA_VERIFICADA'
                 if len(examples)<25:examples.append((reference,reason))
