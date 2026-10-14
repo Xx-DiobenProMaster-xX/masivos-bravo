@@ -111,6 +111,9 @@ def run():
     today=datetime.now(TZ).date()
     reasons={}
     examples=[]
+    candidatos_por_plantilla={}
+    bloqueos_por_plantilla={}
+    seleccionadas=0
     for r in masivos:
         reference=ref(value(r,hm,'REFERENCIA'))
         if not reference:continue
@@ -123,6 +126,7 @@ def run():
         elif norm(value(r,hm,'HABILITADO')) not in {'SI'}:reason='NO HABILITADO'
         elif norm(value(r,hm,'TIPO CORREO')) not in {'MORA_1','MORA 1'}:reason='OTRA CAMPAÑA'
         else:
+            seleccionadas+=1
             fecha_original=parse_date(value(s,hs,'FECHA_INICIO_MORA_1'))
             start=fecha_original if fecha_original and fecha_original<=today else FECHA_BASE
             origen='HISTORICO_HOJA' if fecha_original and fecha_original<=today else 'BASE_30_SEPTIEMBRE'
@@ -148,7 +152,11 @@ def run():
                     reason='SIN ENVIO PROGRAMADO | DIA '+str(day)
                 else:
                     reason=tipo+' | DIA '+str(day)+' | '+origen+' | COLA_VERIFICADA'
-                if len(examples)<25:examples.append((reference,reason))
+                if reason.endswith('COLA_VERIFICADA') and template:
+                    candidatos_por_plantilla[template]=candidatos_por_plantilla.get(template,0)+1
+                elif template:
+                    bloqueos_por_plantilla[template]=bloqueos_por_plantilla.get(template,0)+1
+                if len(examples)<25:examples.append(('***'+reference[-4:],reason))
         reasons[reason]=reasons.get(reason,0)+1
     print('CARTERA DIOBEN | DIAGNOSTICO |',datetime.now(TZ).isoformat())
     print('NO SE ENVÍAN CORREOS. NO SE MODIFICAN HOJAS.')
@@ -163,5 +171,20 @@ def run():
     print('T001: evitar reenvios el mismo dia; especiales: evitar reenvios del mismo ciclo.')
     print('SIMULACION SEGURA: las fechas de inicio de ciclo sin confirmar permanecen bloqueadas.')
     print('PENDIENTE: vincular motor de envío con cuenta autorizada y confirmar deduplicación por ciclo; esta prueba es de solo lectura.')
+    reporte={
+        'modo':'SIMULACION_SIN_ENVIOS',
+        'generado_bogota':datetime.now(TZ).isoformat(),
+        'seleccionadas_en_cartera_dioben':seleccionadas,
+        'candidatos_por_plantilla':candidatos_por_plantilla,
+        'bloqueos_por_plantilla':bloqueos_por_plantilla,
+        'motivos':reasons,
+        'plantillas_activas':disponibles,
+        'fechas_auditoria':fechas,
+        'pares_en_cola':len(existentes),
+        'nota':'Sin destinatarios ni referencias completas; no se envía ni modifica ninguna hoja.'
+    }
+    with open('mora1_simulacion_resumen.json','w',encoding='utf-8') as archivo:
+        json.dump(reporte,archivo,ensure_ascii=False,indent=2)
+    print('REPORTE CREADO: mora1_simulacion_resumen.json')
 
 if __name__=='__main__':run()
