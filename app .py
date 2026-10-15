@@ -578,6 +578,19 @@ def sincronizar_respuestas_gmail(credenciales, dias=30, max_mensajes=500):
         raise ValueError("Faltan columnas en COLA_ENVIO: " + ", ".join(faltan))
     idx = {c: cab.index(c) for c in necesarias}
 
+    ids_campanas_alianzas_sync = set()
+    try:
+        registros_camp = archivo.worksheet("CAMPAÑAS").get_all_values()
+        if registros_camp:
+            columnas_camp = {n.strip():i for i,n in enumerate(registros_camp[0])}
+            for cr in registros_camp[1:]:
+                def cv(n):
+                    j=columnas_camp.get(n)
+                    return str(cr[j]).strip() if j is not None and j < len(cr) else ""
+                if cv("FILTRO").upper()=="ALIANZAS" or cv("PLANTILLA").upper()==ALIANZAS_TEMPLATE_ID:
+                    ids_campanas_alianzas_sync.add(cv("ID_CAMPAÑA"))
+    except Exception:
+        pass
     por_email = {}
     for fila in cola_vals[1:]:
         def v(col):
@@ -667,6 +680,10 @@ def sincronizar_respuestas_gmail(credenciales, dias=30, max_mensajes=500):
             continue
 
         candidatos = por_email.get(email_cliente, [])
+        if para_alianzas:
+            candidatos = [c for c in candidatos if c["ID_CAMPAÑA"] in ids_campanas_alianzas_sync or c["PLANTILLA"].upper()==ALIANZAS_TEMPLATE_ID]
+        else:
+            candidatos = [c for c in candidatos if c["ID_CAMPAÑA"] not in ids_campanas_alianzas_sync and c["PLANTILLA"].upper()!=ALIANZAS_TEMPLATE_ID]
         if not candidatos and not para_alianzas:
             sin_relacion += 1
             continue
