@@ -400,6 +400,18 @@ Lunes a viernes, 8:00 a.m. - 6:00 p.m.
 </body></html>"""
 
 
+def remitente_segun_campana(campana):
+    """Alianzas usa su dirección propia; el resto conserva remitente actual."""
+    if campana is None:
+        return GMAIL_FROM
+    try:
+        tipo = str(campana.get("FILTRO", "") or "").strip().upper()
+        plantilla = str(campana.get("PLANTILLA", "") or "").strip().upper()
+    except (AttributeError, TypeError):
+        return GMAIL_FROM
+    return ALIANZAS_RESPUESTAS_EMAIL if tipo == "ALIANZAS" or plantilla == ALIANZAS_TEMPLATE_ID else GMAIL_FROM
+
+
 def construir_mensaje_gmail(destinatario, asunto, cuerpo_html, remitente=GMAIL_FROM):
     destinatario = str(destinatario or "").strip()
     asunto = str(asunto or "").strip()
@@ -414,7 +426,7 @@ def construir_mensaje_gmail(destinatario, asunto, cuerpo_html, remitente=GMAIL_F
     msg = EmailMessage()
     msg["To"] = destinatario
     msg["From"] = f"Bravo S.A.S. <{remitente}>"
-    msg["Reply-To"] = GMAIL_REPLY_TO
+    msg["Reply-To"] = remitente if remitente == ALIANZAS_RESPUESTAS_EMAIL else GMAIL_REPLY_TO
     msg["Subject"] = asunto
 
     # Versión de texto simple como respaldo y HTML como contenido principal.
@@ -427,9 +439,9 @@ def construir_mensaje_gmail(destinatario, asunto, cuerpo_html, remitente=GMAIL_F
     return {"raw": raw}
 
 
-def enviar_mensaje_gmail(credenciales, destinatario, asunto, cuerpo_html):
+def enviar_mensaje_gmail(credenciales, destinatario, asunto, cuerpo_html, remitente=GMAIL_FROM):
     servicio = build("gmail", "v1", credentials=credenciales, cache_discovery=False)
-    body = construir_mensaje_gmail(destinatario, asunto, cuerpo_html)
+    body = construir_mensaje_gmail(destinatario, asunto, cuerpo_html, remitente=remitente)
     return servicio.users().messages().send(userId="me", body=body).execute()
 
 
@@ -785,6 +797,7 @@ def procesar_campanas_programadas_gmail(credenciales, limite=100):
     detalle = []
     campanas_tocadas = set()
     estados_campana = {}
+    campanas_remitentes = {}
 
     for numero_fila, fila in enumerate(valores[1:], start=2):
         if enviados + errores >= int(limite):
@@ -805,6 +818,8 @@ def procesar_campanas_programadas_gmail(credenciales, limite=100):
             continue
         if id_campana not in estados_campana:
             estados_campana[id_campana] = _estado_campana_actual(id_campana)
+        if id_campana not in campanas_remitentes:
+            campanas_remitentes[id_campana] = remitente_segun_campana(fila_campana_por_id(id_campana))
         if estados_campana[id_campana] != "PROGRAMADA":
             omitidos += 1
             continue
@@ -830,6 +845,7 @@ def procesar_campanas_programadas_gmail(credenciales, limite=100):
                 destinatario=email,
                 asunto=asunto,
                 cuerpo_html=cuerpo,
+                remitente=campanas_remitentes[id_campana],
             )
             gmail_id = str(respuesta.get("id", "")).strip()
             fecha_envio = datetime.now(TZ).strftime("%d/%m/%Y %H:%M:%S")
