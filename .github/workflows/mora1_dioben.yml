@@ -29,9 +29,9 @@ jobs:
       - name: Enviar Mora 1 (solo si habilitado explícitamente)
         if: ${{ vars.MORA1_ENVIOS_REALES == 'SI' }}
         env:
-          MORA1_GMAIL_CLIENT_ID: ${{ secrets.MORA1_GMAIL_CLIENT_ID }}
-          MORA1_GMAIL_CLIENT_SECRET: ${{ secrets.MORA1_GMAIL_CLIENT_SECRET }}
-          MORA1_GMAIL_REFRESH_TOKEN: ${{ secrets.MORA1_GMAIL_REFRESH_TOKEN }}
+          GMAIL_CLIENT_ID: ${{ secrets.GMAIL_CLIENT_ID }}
+          GMAIL_CLIENT_SECRET: ${{ secrets.GMAIL_CLIENT_SECRET }}
+          GMAIL_REFRESH_TOKEN: ${{ secrets.GMAIL_REFRESH_TOKEN }}
         run: |
           pip install google-api-python-client google-auth-httplib2
           python mora1_enviar_programados.py
