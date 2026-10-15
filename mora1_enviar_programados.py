@@ -92,13 +92,18 @@ def main():
             dt=parse_date(value(prior,hc,"FECHA_ENVIO")) or parse_date(value(prior,hc,"FECHA_PROG"))
             if dt is None or dt>=(today if template=="T001" else first):duplicate=True;break
         if not duplicate:candidates.append((row_number,r))
+    print("Fecha Bogotá:",today.isoformat())
     print("Elegibles tras revalidación:",len(candidates),"| Límite:",limit)
+    print("Capacidad disponible según configuración:",max(0,limit-len(candidates)))
+    if len(candidates)>limit:
+        print("ALERTA CAPACIDAD: lote supera el límite configurado por",len(candidates)-limit,"mensajes.")
+        print("ACCIÓN: ampliar MORA1_LIMITE_ENVIOS dentro de la cuota de Gmail o revisar el lote; no activar aún.")
     if simulacion:
         print("MODO SIMULACION: candidatos:",len(candidates))
         print("MODO SIMULACION: no se utilizó Gmail, ni se modificó Sheets, ni se envió correo.")
         return
     if len(candidates)>limit:
-        raise RuntimeError("Hay más candidatos que el límite diario; no se enviará un lote parcial ni se perderá el resto.")
+        raise RuntimeError("Lote excede el máximo configurado. Se bloqueó TODO el envío para evitar ejecuciones parciales; los borradores permanecen pendientes, pero NO se trasladan automáticamente al día siguiente.")
     if not candidates:return
     # Credenciales Gmail separadas: token OAuth de cuenta autorizada, nunca de servicio Sheets.
     oauth=OAuthCredentials(
@@ -115,6 +120,9 @@ def main():
     sent=0
     for row_number,r in candidates[:limit]:
         # Comprobar estado en Sheet inmediatamente antes de cada intento.
+        if datetime.now(TZ).date()!=today:
+            print("CORTE: cambió el día en Bogotá; no se continúa con envíos vencidos.")
+            break
         if norm(ws.cell(row_number,hc["ESTADO"]+1).value)!="BORRADOR":continue
         attempts=int(value(r,hc,"INTENTOS") or "0")
         if attempts!=0:continue
