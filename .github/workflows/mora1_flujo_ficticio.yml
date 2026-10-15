@@ -1,0 +1,16 @@
+name: Mora 1 - Flujo ficticio sin efectos
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  simulacion:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Simular estados, filtros y duplicados sin servicios externos
+        run: python mora1_flujo_ficticio.py
