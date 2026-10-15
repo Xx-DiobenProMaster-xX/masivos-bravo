@@ -86,10 +86,10 @@ def main():
     # Credenciales Gmail separadas: token OAuth de cuenta autorizada, nunca de servicio Sheets.
     oauth=OAuthCredentials(
         token=None,
-        refresh_token=getenv_required("MORA1_GMAIL_REFRESH_TOKEN"),
+        refresh_token=getenv_required("GMAIL_REFRESH_TOKEN"),
         token_uri="https://oauth2.googleapis.com/token",
-        client_id=getenv_required("MORA1_GMAIL_CLIENT_ID"),
-        client_secret=getenv_required("MORA1_GMAIL_CLIENT_SECRET"),
+        client_id=getenv_required("GMAIL_CLIENT_ID"),
+        client_secret=getenv_required("GMAIL_CLIENT_SECRET"),
         scopes=["https://www.googleapis.com/auth/gmail.send"],
     )
     oauth.refresh(Request())
