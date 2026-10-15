@@ -621,7 +621,7 @@ def sincronizar_respuestas_gmail(credenciales, dias=30, max_mensajes=500):
             }
 
     # Solo mensajes que llegaron al buzón de Estructurados.
-    query = f"to:{GMAIL_REPLY_TO} newer_than:{int(dias)}d"
+    query = f"{{to:{GMAIL_REPLY_TO} to:{ALIANZAS_RESPUESTAS_EMAIL}}} newer_than:{int(dias)}d"
     ids_gmail = []
     token = None
     while len(ids_gmail) < int(max_mensajes):
@@ -661,12 +661,13 @@ def sincronizar_respuestas_gmail(credenciales, dias=30, max_mensajes=500):
             base64.urlsafe_b64decode(raw.encode("utf-8"))
         )
 
+        para_alianzas = any(ALIANZAS_RESPUESTAS_EMAIL.lower() in str(msg.get(h, "")).lower() for h in ("To", "Cc", "Delivered-To", "X-Original-To"))
         email_cliente = _email_normalizado(msg.get("From", ""))
         if not email_cliente or email_cliente == GMAIL_REPLY_TO.lower():
             continue
 
         candidatos = por_email.get(email_cliente, [])
-        if not candidatos:
+        if not candidatos and not para_alianzas:
             sin_relacion += 1
             continue
 
@@ -684,9 +685,12 @@ def sincronizar_respuestas_gmail(credenciales, dias=30, max_mensajes=500):
             if fenv is None or fenv <= fecha_respuesta:
                 envio = candidato
                 break
-        if envio is None:
+        if envio is None and not para_alianzas:
             sin_relacion += 1
             continue
+        if envio is None:
+            sin_relacion += 1
+            envio = {"NOMBRE":"","REFERENCIA":"","ID_CAMPAÑA":"","ID_ENVIO":"","PLANTILLA":ALIANZAS_TEMPLATE_ID,"ENCARGADO":"Alianzas"}
 
         respuesta = _texto_mensaje_email(msg)
         if not respuesta:
@@ -4425,9 +4429,7 @@ if not campanas.empty and "ID_CAMPAÑA" in campanas.columns:
             _ids_campanas_alianzas.add(_idc)
 
 if "ID_CAMPAÑA" in respuestas.columns:
-    respuestas["_ES_ALIANZAS"] = respuestas["ID_CAMPAÑA"].astype(str).str.strip().isin(
-        _ids_campanas_alianzas
-    )
+    respuestas["_ES_ALIANZAS"] = (respuestas["ID_CAMPAÑA"].astype(str).str.strip().isin(_ids_campanas_alianzas) | respuestas.get("PLANTILLA", pd.Series("", index=respuestas.index)).astype(str).str.strip().str.upper().eq(ALIANZAS_TEMPLATE_ID))
 else:
     respuestas["_ES_ALIANZAS"] = False
 
@@ -6445,6 +6447,17 @@ elif menu == "🤝 Alianzas":
                         st.error(f"❌ No pude crear la campaña: {e}")
 
     with tab_resp_alianzas:
+        if st.button("🔄 Sincronizar respuestas de Alianzas", key="sync_respuestas_alianzas"):
+            cred = credenciales_gmail_sesion()
+            if cred is None:
+                st.error("Conecta Gmail en Configuración para consultar respuestas.")
+            else:
+                try:
+                    res = sincronizar_respuestas_gmail(cred, dias=90, max_mensajes=1000)
+                    st.success("Respuestas nuevas registradas: " + str(res["nuevas"]))
+                    st.rerun()
+                except Exception as exc:
+                    st.error("Error de sincronización: " + str(exc))
         st.caption(
             "Aquí aparecen únicamente respuestas cuyo ID_CAMPAÑA pertenece a "
             "una campaña ALIANZAS / TAL001."
