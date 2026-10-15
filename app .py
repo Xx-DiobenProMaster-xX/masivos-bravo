@@ -4086,6 +4086,7 @@ def enviar_campana_ahora_gmail(id_campana, credenciales, tamano_lote=10):
                     destinatario=email,
                     asunto=asunto,
                     cuerpo_html=cuerpo,
+                    remitente=remitente_segun_campana(fila),
                 )
                 gmail_id = str(respuesta.get("id", "")).strip()
                 fecha_envio = datetime.now(TZ).strftime("%d/%m/%Y %H:%M:%S")
