@@ -1,11 +1,11 @@
-"""Verifica OAuth Gmail sin enviar mensajes y sin mostrar tokens."""
+"""Valida OAuth de Gmail usando solo gmail.send; nunca envía correos."""
 import os
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
-from googleapiclient.discovery import build
+from google.auth.exceptions import RefreshError
 
 names=("GMAIL_CLIENT_ID","GMAIL_CLIENT_SECRET","GMAIL_REFRESH_TOKEN")
-missing=[name for name in names if not os.environ.get(name, "").strip()]
+missing=[n for n in names if not os.environ.get(n,"").strip()]
 if missing:
     raise SystemExit("ERROR: faltan secretos en GitHub: "+", ".join(missing))
 
@@ -19,16 +19,22 @@ creds=Credentials(
 )
 try:
     creds.refresh(Request())
-    if not creds.valid:
-        raise RuntimeError("El acceso OAuth no es válido")
-    gmail=build("gmail","v1",credentials=creds,cache_discovery=False)
-    profile=gmail.users().getProfile(userId="me").execute()
-    email=profile.get("emailAddress","")
-    masked=(email[:2]+"***@"+email.split("@",1)[1]) if "@" in email else "(no disponible)"
-    print("OK: autenticación Gmail funcionando.")
-    print("Cuenta autenticada (parcialmente oculta):",masked)
-    print("Solo se consultó el perfil. NO SE ENVIÓ NINGÚN CORREO.")
-except Exception as error:
-    print("ERROR: no fue posible autenticar Gmail o consultar el perfil.")
-    print("Tipo de error:",type(error).__name__)
+except RefreshError:
+    print("ERROR: Google rechazó la renovación OAuth. Consultar con el administrador.")
     raise SystemExit(1)
+except Exception as exc:
+    print("ERROR: problema de conexión al renovar OAuth:",type(exc).__name__)
+    raise SystemExit(1)
+if not creds.valid:
+    raise SystemExit("ERROR: la credencial renovada no es válida.")
+
+print("OK: refresh token vigente; Google emitió un access token.")
+if creds.granted_scopes:
+    if "https://www.googleapis.com/auth/gmail.send" in creds.granted_scopes:
+        print("OK: gmail.send aparece entre los permisos otorgados.")
+    else:
+        raise SystemExit("ERROR: gmail.send no aparece entre los permisos otorgados.")
+else:
+    print("AVISO: Google no informó los permisos otorgados; confirmar con una prueba controlada posterior.")
+print("NO SE ENVIÓ NINGÚN CORREO.")
+print("Nota: users.getProfile requiere permisos distintos de gmail.send; por eso se eliminó esa consulta de esta prueba.")
