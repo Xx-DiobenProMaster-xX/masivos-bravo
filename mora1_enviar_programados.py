@@ -56,12 +56,17 @@ def main():
         else:follow_map[k]=r
     camp_map={value(r,hca,"ID_CAMPANA"):norm(value(r,hca,"ESTADO")) for r in campaigns}
     active_templates={norm(value(r,hp,"ID_PLANTILLA")) for r in templates if norm(value(r,hp,"ESTADO"))=="ACTIVA" and value(r,hp,"CUERPO") and value(r,hp,"ASUNTO")}
+    from collections import Counter
+    counts=Counter(value(row,hc,"ID_ENVIO") for row in queue if value(row,hc,"ID_ENVIO").startswith("MORA1-"))
+    if any(v>1 for v in counts.values()):
+        raise RuntimeError("IDs de Mora 1 duplicados en COLA_ENVIO; ningún envío autorizado.")
     candidates=[]
     seen=set()
     for row_number,r in enumerate(queue,start=2):
         sendid=value(r,hc,"ID_ENVIO")
         m=PATTERN.fullmatch(sendid)
         if not m or norm(value(r,hc,"ESTADO"))!="BORRADOR":continue
+        if int(value(r,hc,"INTENTOS") or "0")!=0:continue
         stamp,template,reference=m.groups()
         if stamp!=today.strftime("%Y%m%d"):continue
         if (reference,template) in seen:continue
@@ -88,7 +93,7 @@ def main():
         for prior in queue:
             if value(prior,hc,"ID_ENVIO")==sendid:continue
             if ref(value(prior,hc,"REFERENCIA"))!=reference or norm(value(prior,hc,"PLANTILLA"))!=template:continue
-            if norm(value(prior,hc,"ESTADO")) not in {"ENVIADO","ENVIANDO","PROGRAMADA","PENDIENTE","BORRADOR"}:continue
+            if norm(value(prior,hc,"ESTADO")) in {"CANCELADO","CANCELADA","ANULADO","ANULADA"}:continue
             dt=parse_date(value(prior,hc,"FECHA_ENVIO")) or parse_date(value(prior,hc,"FECHA_PROG"))
             if dt is None or dt>=(today if template=="T001" else first):duplicate=True;break
         if not duplicate:candidates.append((row_number,r))
@@ -118,34 +123,68 @@ def main():
     gmail=build("gmail","v1",credentials=oauth,cache_discovery=False)
     ws=target.worksheet("COLA_ENVIO")
     sent=0
+    from gspread.utils import rowcol_to_a1
     for row_number,r in candidates[:limit]:
-        # Comprobar estado en Sheet inmediatamente antes de cada intento.
         if datetime.now(TZ).date()!=today:
-            print("CORTE: cambió el día en Bogotá; no se continúa con envíos vencidos.")
+            print("CORTE: cambió la fecha de Bogotá.")
             break
-        if norm(ws.cell(row_number,hc["ESTADO"]+1).value)!="BORRADOR":continue
-        attempts=int(value(r,hc,"INTENTOS") or "0")
-        if attempts!=0:continue
-        ws.update_cell(row_number,hc["ESTADO"]+1,"ENVIANDO")
-        ws.update_cell(row_number,hc["INTENTOS"]+1,attempts+1)
+        live=ws.row_values(row_number)
+        if value(live,hc,"ID_ENVIO")!=value(r,hc,"ID_ENVIO"):continue
+        if norm(value(live,hc,"ESTADO"))!="BORRADOR" or int(value(live,hc,"INTENTOS") or "0")!=0:continue
+        if value(live,hc,"ID_MENSAJE") or value(live,hc,"FECHA_ENVIO"):continue
+        if value(live,hc,"EMAIL")!=value(r,hc,"EMAIL"):continue
+        # Releer cola antes de cada envío: detectar otros intentos o estados ambiguos.
+        fresh=ws.get_all_values()[1:]
+        reference=ref(value(r,hc,"REFERENCIA"))
+        template=norm(value(r,hc,"PLANTILLA"))
+        begin=parse_date(value(follow_map[reference],hs,"FECHA_INICIO_MORA_1"))
+        blocked=False
+        for other in fresh:
+            if value(other,hc,"ID_ENVIO")==value(r,hc,"ID_ENVIO"):continue
+            if ref(value(other,hc,"REFERENCIA"))!=reference or norm(value(other,hc,"PLANTILLA"))!=template:continue
+            when=parse_date(value(other,hc,"FECHA_ENVIO")) or parse_date(value(other,hc,"FECHA_PROG"))
+            if (when is None or when >= (today if template=="T001" else begin)) and norm(value(other,hc,"ESTADO")) not in {"CANCELADO","CANCELADA","ANULADO","ANULADA"}:
+                blocked=True
+                break
+        if blocked:
+            print("OMITIDO: otro envío/intento de la misma referencia.")
+            continue
+        msg=EmailMessage()
+        msg["To"]=value(r,hc,"EMAIL")
+        msg["From"]="estructurados@gobravo.com.co"
+        msg["Reply-To"]="estructurados@gobravo.com.co"
+        msg["Subject"]=value(r,hc,"ASUNTO")
+        msg.set_content("Mensaje de BRAVO. Consulta la versión HTML de este correo.")
+        msg.add_alternative(value(r,hc,"CUERPO"),subtype="html")
+        raw=base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")
+        # Guardar intento ANTES del contacto con Gmail.
+        ws.batch_update([
+            {"range":rowcol_to_a1(row_number,hc["ESTADO"]+1),"values":[["ENVIANDO"]]},
+            {"range":rowcol_to_a1(row_number,hc["INTENTOS"]+1),"values":[[1]]}
+        ],value_input_option="RAW")
+        locked=ws.row_values(row_number)
+        if value(locked,hc,"ID_ENVIO")!=value(r,hc,"ID_ENVIO") or norm(value(locked,hc,"ESTADO"))!="ENVIANDO" or value(locked,hc,"INTENTOS")!="1":
+            raise RuntimeError("No se confirmó la reserva en Sheets; envío cancelado.")
         try:
-            msg=EmailMessage()
-            msg["To"]=value(r,hc,"EMAIL")
-            msg["From"]="estructurados@gobravo.com.co"
-            msg["Reply-To"]="estructurados@gobravo.com.co"
-            msg["Subject"]=value(r,hc,"ASUNTO")
-            msg.set_content("Mensaje de BRAVO. Consulta la versión HTML de este correo.")
-            msg.add_alternative(value(r,hc,"CUERPO"),subtype="html")
-            result=gmail.users().messages().send(userId="me",body={"raw":base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")}).execute()
-            ws.update_cell(row_number,hc["ID_MENSAJE"]+1,str(result.get("id","")))
-            ws.update_cell(row_number,hc["FECHA_ENVIO"]+1,datetime.now(TZ).strftime("%d/%m/%Y %H:%M:%S"))
+            result=gmail.users().messages().send(userId="me",body={"raw":raw}).execute()
+        except Exception as exc:
+            print("AVISO: envío Gmail fallido o ambiguo. Se conserva ENVIANDO sin reintento automático:",type(exc).__name__)
+            continue
+        message_id=str(result.get("id","")).strip()
+        if not message_id:
+            print("AVISO: Gmail no devolvió ID; conservar ENVIANDO y conciliar manualmente.")
+            continue
+        try:
+            # Evidencia primero; ESTADO final después.
+            ws.batch_update([
+                {"range":rowcol_to_a1(row_number,hc["ID_MENSAJE"]+1),"values":[[message_id]]},
+                {"range":rowcol_to_a1(row_number,hc["FECHA_ENVIO"]+1),"values":[[datetime.now(TZ).strftime("%d/%m/%Y %H:%M:%S")]]}
+            ],value_input_option="RAW")
             ws.update_cell(row_number,hc["ESTADO"]+1,"ENVIADO")
             sent+=1
         except Exception as exc:
-            # No reintentar automáticamente un estado ambiguo.
-            ws.update_cell(row_number,hc["ERROR"]+1,str(exc)[:400])
-            ws.update_cell(row_number,hc["ESTADO"]+1,"ERROR")
-            print("Error en una fila; requiere revisión manual")
+            print("CRÍTICO: Gmail aceptó el mensaje pero Sheets falló; NO restaurar a BORRADOR:",type(exc).__name__)
+            raise
     print("Mensajes enviados:",sent)
 
 if __name__=="__main__":main()
