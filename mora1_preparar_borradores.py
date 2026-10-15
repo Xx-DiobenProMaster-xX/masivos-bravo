@@ -11,6 +11,82 @@ CANCELADOS = {"ERROR", "CANCELADO", "CANCELADA", "BLOQUEADO", "BLOQUEADA", "FALL
 ACTIVOS = {"BORRADOR", "PREPARADA", "PREPARADO", "PENDIENTE", "PROGRAMADO", "PROGRAMADA", "ENVIANDO", "ENVIADO", "ENVIADA", "EN COLA", "LISTO", "LISTA"}
 TRUE = {"TRUE", "VERDADERO", "SI", "1", "X"}
 
+
+def vincular_campanas_borrador(destino):
+    """Vincula solo borradores propios de Mora 1. No programa ni envía."""
+    import collections
+    from gspread.utils import rowcol_to_a1
+    ws=destino.worksheet("COLA_ENVIO")
+    wc=destino.worksheet("CAMPAÑAS")
+    values=ws.get_all_values()
+    campaigns=wc.get_all_values()
+    if not values or not campaigns:
+        raise RuntimeError("COLA_ENVIO o CAMPAÑAS no tiene encabezados")
+    hc={norm(h):i for i,h in enumerate(values[0])}
+    hp={norm(h):i for i,h in enumerate(campaigns[0])}
+    for name,h,cols in [
+        ("COLA_ENVIO",hc,{"ID_ENVIO","ID_CAMPANA","PLANTILLA","ESTADO"}),
+        ("CAMPAÑAS",hp,{"ID_CAMPANA","NOMBRE_CAMPANA","PLANTILLA","FILTRO","ESTADO"})
+    ]:
+        if not cols.issubset(h):
+            raise RuntimeError(name+" carece de "+str(sorted(cols-set(h))))
+    pattern=re.compile(r"^MORA1-(\d{8})-(T001|MORA10[1-5])-(.+)$")
+    grouped=collections.defaultdict(list)
+    for n,row in enumerate(values[1:],start=2):
+        send_id=value(row,hc,"ID_ENVIO")
+        m=pattern.fullmatch(send_id)
+        if not m or norm(value(row,hc,"ESTADO"))!="BORRADOR":
+            continue
+        dt,code,_=m.groups()
+        expected=f"MORA1-{dt}-{code}"
+        existing=value(row,hc,"ID_CAMPANA")
+        if existing and existing!=expected:
+            raise RuntimeError("Un borrador de Mora 1 tiene ID_CAMPAÑA inesperado; no se modificó.")
+        grouped[expected].append((n,row))
+    if not grouped:
+        print("No hay borradores de Mora 1 pendientes de vincular.")
+        return
+    current={}
+    for row in campaigns[1:]:
+        k=value(row,hp,"ID_CAMPANA")
+        if k:
+            if k in current:raise RuntimeError("ID_CAMPAÑA duplicado en CAMPAÑAS: "+k)
+            current[k]=row
+    new_campaigns=[]
+    for key,items in sorted(grouped.items()):
+        code=key.rsplit("-",1)[1]
+        day=key.split("-")[1]
+        if key in current:
+            existing=current[key]
+            if norm(value(existing,hp,"ESTADO")) not in {"BORRADOR","PREPARADA"}:
+                raise RuntimeError("Campaña existente con estado no seguro: "+key)
+            if norm(value(existing,hp,"PLANTILLA"))!=code:
+                raise RuntimeError("Campaña existente tiene otra plantilla: "+key)
+        else:
+            count=len(items)
+            datos={
+                "ID_CAMPANA":key,"NOMBRE_CAMPANA":f"Mora 1 Dioben · {day} · {code}",
+                "PLANTILLA":code,"FILTRO":"MORA_1","ESTADO":"BORRADOR",
+                "FECHA_ENVIO":f"{day[6:8]}/{day[4:6]}/{day[0:4]}",
+                "HORA_ENVIO":"08:15","TOTAL_CLIENTES":count,"PENDIENTES":count,
+                "ENVIADOS":0,"ERRORES":0,
+                "FECHA_CREACION":datetime.now(TZ).strftime("%d/%m/%Y %H:%M:%S"),
+                "COMENTARIOS":"Creada por GitHub Actions; requiere revisión y autorización manual."
+            }
+            new_campaigns.append([datos.get(h,"") for h,_ in sorted(hp.items(),key=lambda x:x[1])])
+    if new_campaigns:
+        wc.append_rows(new_campaigns,value_input_option="RAW")
+    updates=[]
+    for key,items in grouped.items():
+        for n,row in items:
+            if not value(row,hc,"ID_CAMPANA"):
+                updates.append({"range":rowcol_to_a1(n,hc["ID_CAMPANA"]+1),"values":[[key]]})
+    for i in range(0,len(updates),150):
+        ws.batch_update(updates[i:i+150],value_input_option="RAW")
+    print("Campañas en BORRADOR creadas:",len(new_campaigns))
+    print("Borradores existentes/nuevos vinculados:",len(updates))
+    print("NO SE PROGRAMÓ NI SE ENVIÓ NINGÚN CORREO.")
+
 def main():
     if os.getenv("MORA1_PREPARAR_BORRADORES") != "SI":
         print("MODO SEGURO: PREPARACIÓN DESHABILITADA. Para habilitar, configurar MORA1_PREPARAR_BORRADORES=SI.")
@@ -122,10 +198,12 @@ def main():
             "FECHA_PROG":hoy.strftime("%d/%m/%Y")+" 08:15",
             "FECHA_ENVIO":"","INTENTOS":0,"ERROR":"","ID_MENSAJE":""
         }
-        batch.append([values.get(header,"") for header,_ in sorted(hc.items(),key=lambda kv:kv[1])])
+        batch.append([values.get(header,"") if header!="ID_CAMPANA" else f"MORA1-{hoy:%Y%m%d}-{code}" for header,_ in sorted(hc.items(),key=lambda kv:kv[1])])
     print("Candidatos preparados como BORRADOR:",len(batch))
     print("Omisiones:",json.dumps(reasons,ensure_ascii=False))
-    if not batch:return
+    if not batch:
+        vincular_campanas_borrador(destino)
+        return
     # Antes de escribir, leer nuevamente para evitar duplicación si otro proceso creó registros.
     ws=destino.worksheet("COLA_ENVIO")
     fresh=ws.get_all_values()
@@ -134,6 +212,7 @@ def main():
     if valid:
         ws.append_rows(valid,value_input_option="RAW")
     print("Borradores agregados:",len(valid))
+    vincular_campanas_borrador(destino)
     print("NO SE ENVIARON CORREOS. Los BORRADORES requieren autorización explícita para enviarse.")
 
 if __name__=="__main__":
