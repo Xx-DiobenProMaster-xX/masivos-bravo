@@ -3217,7 +3217,7 @@ def obtener_pestana_alianzas_mas_reciente():
     Pestaña que actualmente contiene la base de clientes
     para la campaña de Alianzas.
     """
-    nombre_objetivo = "01_10"
+    nombre_objetivo = max(((_fecha_desde_nombre_pestana(ws.title), ws.title) for ws in obtener_gc().open_by_key(ALIANZAS_SOURCE_SPREADSHEET_ID).worksheets() if _fecha_desde_nombre_pestana(ws.title) is not None and _fecha_desde_nombre_pestana(ws.title) <= datetime.now(TZ).date()), default=(None, None))[1]
 
     libro = obtener_gc().open_by_key(
         ALIANZAS_SOURCE_SPREADSHEET_ID
@@ -6307,7 +6307,7 @@ elif menu == "🤝 Alianzas":
 
     with tab_base_alianzas:
         st.info(
-            "Fuente: Masivos_Descuento · pestaña actual: 01_10. "
+            "Fuente: Masivos_Descuento · pestaña más reciente disponible hasta hoy. "
             "La sincronización carga Referencia, Cédula, Banco, Correo y Nombre Limpio."
         )
 
