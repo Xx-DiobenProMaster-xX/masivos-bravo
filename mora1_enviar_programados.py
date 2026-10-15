@@ -19,7 +19,8 @@ def getenv_required(k):
     if not v:raise RuntimeError("Falta el secreto "+k)
     return v
 def main():
-    if os.getenv("MORA1_ENVIOS_REALES","").strip().upper()!="SI":
+    simulacion=os.getenv("MORA1_MODO_SIMULACION","").strip().upper()=="SI"
+    if not simulacion and os.getenv("MORA1_ENVIOS_REALES","").strip().upper()!="SI":
         print("MORA1: ENVÍOS REALES DESACTIVADOS. Ningún mensaje enviado.")
         return
     limit=int(os.getenv("MORA1_LIMITE_ENVIOS","100"))
@@ -92,6 +93,10 @@ def main():
             if dt is None or dt>=(today if template=="T001" else first):duplicate=True;break
         if not duplicate:candidates.append((row_number,r))
     print("Elegibles tras revalidación:",len(candidates),"| Límite:",limit)
+    if simulacion:
+        print("MODO SIMULACION: candidatos:",len(candidates))
+        print("MODO SIMULACION: no se utilizó Gmail, ni se modificó Sheets, ni se envió correo.")
+        return
     if len(candidates)>limit:
         raise RuntimeError("Hay más candidatos que el límite diario; no se enviará un lote parcial ni se perderá el resto.")
     if not candidates:return
