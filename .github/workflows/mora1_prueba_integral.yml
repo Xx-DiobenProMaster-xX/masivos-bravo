@@ -1,0 +1,33 @@
+name: Mora 1 - Prueba integral aislada
+on:
+  workflow_dispatch:
+    inputs:
+      email_prueba:
+        description: "Correo de prueba propio o autorizado"
+        required: true
+        type: string
+      confirmacion:
+        description: "Escribe ENVIAR_PRUEBA para un solo correo"
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  probar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      MI_JSON: ${{ secrets.MI_JSON }}
+      GMAIL_CLIENT_ID: ${{ secrets.GMAIL_CLIENT_ID }}
+      GMAIL_CLIENT_SECRET: ${{ secrets.GMAIL_CLIENT_SECRET }}
+      GMAIL_REFRESH_TOKEN: ${{ secrets.GMAIL_REFRESH_TOKEN }}
+      MORA1_TEST_EMAIL: ${{ inputs.email_prueba }}
+      MORA1_TEST_CONFIRMACION: ${{ inputs.confirmacion }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install gspread google-auth google-api-python-client
+      - name: Probar validaciones y enviar solo a destinatario controlado
+        run: python mora1_prueba_integral.py
