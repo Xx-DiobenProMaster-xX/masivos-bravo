@@ -1,0 +1,19 @@
+name: Mora 1 - Identificar piloto elegible
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  candidatos:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      MI_JSON: ${{ secrets.MI_JSON }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install gspread google-auth
+      - name: Identificar referencia candidata sin enviar
+        run: python mora1_identificar_piloto.py
