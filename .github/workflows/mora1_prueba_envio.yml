@@ -1,0 +1,32 @@
+name: Mora 1 - Prueba única de envío Gmail
+on:
+  workflow_dispatch:
+    inputs:
+      email_prueba:
+        description: "Correo de destino controlado (único destinatario)"
+        required: true
+        type: string
+      confirmacion:
+        description: "Escribe ENVIAR_PRUEBA para autorizar exactamente un mensaje"
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  prueba:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install google-auth google-api-python-client
+      - name: Enviar un correo de prueba aislado
+        env:
+          GMAIL_CLIENT_ID: ${{ secrets.GMAIL_CLIENT_ID }}
+          GMAIL_CLIENT_SECRET: ${{ secrets.GMAIL_CLIENT_SECRET }}
+          GMAIL_REFRESH_TOKEN: ${{ secrets.GMAIL_REFRESH_TOKEN }}
+          MORA1_TEST_EMAIL: ${{ inputs.email_prueba }}
+          MORA1_TEST_CONFIRMACION: ${{ inputs.confirmacion }}
+        run: python mora1_prueba_envio.py
