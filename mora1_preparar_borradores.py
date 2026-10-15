@@ -47,18 +47,20 @@ def vincular_campanas_borrador(destino):
         print("No hay borradores de Mora 1 pendientes de vincular.")
         return
     current={}
-    for row in campaigns[1:]:
+    current_rows={}
+    for number,row in enumerate(campaigns[1:],start=2):
         k=value(row,hp,"ID_CAMPANA")
         if k:
             if k in current:raise RuntimeError("ID_CAMPAÑA duplicado en CAMPAÑAS: "+k)
             current[k]=row
+            current_rows[k]=number
     new_campaigns=[]
     for key,items in sorted(grouped.items()):
         code=key.rsplit("-",1)[1]
         day=key.split("-")[1]
         if key in current:
             existing=current[key]
-            if norm(value(existing,hp,"ESTADO")) not in {"BORRADOR","PREPARADA"}:
+            if norm(value(existing,hp,"ESTADO")) not in {"BORRADOR","PREPARADA","PROGRAMADA"}:
                 raise RuntimeError("Campaña existente con estado no seguro: "+key)
             if norm(value(existing,hp,"PLANTILLA"))!=code:
                 raise RuntimeError("Campaña existente tiene otra plantilla: "+key)
@@ -74,8 +76,16 @@ def vincular_campanas_borrador(destino):
                 "COMENTARIOS":"Creada por GitHub Actions; requiere revisión y autorización manual."
             }
             new_campaigns.append([datos.get(h,"") for h,_ in sorted(hp.items(),key=lambda x:x[1])])
+    # Volver a BORRADOR únicamente las campañas MORA1 implicadas.
+    reset=[]
+    for key in grouped:
+        if key in current and norm(value(current[key],hp,"ESTADO"))!="BORRADOR":
+            reset.append({"range":rowcol_to_a1(current_rows[key],hp["ESTADO"]+1),"values":[["BORRADOR"]]})
+    if reset:
+        wc.batch_update(reset,value_input_option="RAW")
     if new_campaigns:
         wc.append_rows(new_campaigns,value_input_option="RAW")
+    print("Campañas Mora 1 devueltas a BORRADOR:",len(reset))
     updates=[]
     for key,items in grouped.items():
         for n,row in items:
@@ -110,9 +120,9 @@ def main():
     ]:
         if not cols.issubset(h):
             raise RuntimeError(name + ": faltan columnas " + str(sorted(cols-set(h))))
-    if "ID_CAMPAÑA" not in hc:
-        print("AVISO: COLA_ENVIO no tiene ID_CAMPAÑA; se respetará su estructura.")
-        print("Los borradores NO podrán enviarse con el motor actual hasta corregir esa incompatibilidad.")
+    if "ID_CAMPANA" not in hc:
+        raise RuntimeError("COLA_ENVIO realmente no tiene la columna ID_CAMPAÑA.")
+    print("ID_CAMPAÑA detectada correctamente; se conserva la estructura original.")
     print("Columnas de COLA_ENVIO:", ", ".join(sorted(hc, key=hc.get)))
     hoy=datetime.now(TZ).date()
     bases={}
