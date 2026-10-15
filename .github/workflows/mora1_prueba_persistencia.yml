@@ -1,0 +1,41 @@
+name: Mora 1 - Prueba persistencia sin clientes
+on:
+  workflow_dispatch:
+    inputs:
+      email_prueba:
+        description: "Dirección propia o autorizada, único destinatario"
+        required: true
+        type: string
+      clave_prueba:
+        description: "Clave fija para ejecutar dos veces (ejemplo MORA1_TEST_OCT15)"
+        required: true
+        type: string
+      confirmacion:
+        description: "Escribe ENVIAR_PRUEBA"
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: mora1-persistencia-controlada
+  cancel-in-progress: false
+jobs:
+  prueba:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      MI_JSON: ${{ secrets.MI_JSON }}
+      GMAIL_CLIENT_ID: ${{ secrets.GMAIL_CLIENT_ID }}
+      GMAIL_CLIENT_SECRET: ${{ secrets.GMAIL_CLIENT_SECRET }}
+      GMAIL_REFRESH_TOKEN: ${{ secrets.GMAIL_REFRESH_TOKEN }}
+      MORA1_TEST_EMAIL: ${{ inputs.email_prueba }}
+      MORA1_TEST_CLAVE: ${{ inputs.clave_prueba }}
+      MORA1_TEST_CONFIRMACION: ${{ inputs.confirmacion }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install gspread google-auth google-api-python-client
+      - name: Verificar persistencia y enviar máximo un correo de prueba
+        run: python mora1_prueba_persistencia.py
