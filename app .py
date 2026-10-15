@@ -799,6 +799,10 @@ def procesar_campanas_programadas_gmail(credenciales, limite=100):
             continue
 
         id_campana = val("ID_CAMPAÑA")
+        # Seguridad: Mora 1 automatizada permanece bloqueada hasta habilitar un flujo de envío revisado.
+        if str(id_campana).startswith("MORA1-") or str(val("ID_ENVIO")).startswith("MORA1-"):
+            omitidos += 1
+            continue
         if id_campana not in estados_campana:
             estados_campana[id_campana] = _estado_campana_actual(id_campana)
         if estados_campana[id_campana] != "PROGRAMADA":
