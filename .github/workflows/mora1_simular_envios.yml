@@ -1,0 +1,22 @@
+name: Mora 1 - Simular envíos sin enviar
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  simulacion:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      MI_JSON: ${{ secrets.MI_JSON }}
+      MORA1_MODO_SIMULACION: SI
+      MORA1_ENVIOS_REALES: NO
+      MORA1_LIMITE_ENVIOS: "500"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install gspread google-auth google-api-python-client
+      - name: Validar elegibilidad sin envíos
+        run: python mora1_enviar_programados.py
