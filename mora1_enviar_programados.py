@@ -22,8 +22,8 @@ def main():
     if os.getenv("MORA1_ENVIOS_REALES","").strip().upper()!="SI":
         print("MORA1: ENVÍOS REALES DESACTIVADOS. Ningún mensaje enviado.")
         return
-    limit=int(os.getenv("MORA1_LIMITE_ENVIOS","1"))
-    if not 1<=limit<=100:raise ValueError("MORA1_LIMITE_ENVIOS debe estar entre 1 y 100")
+    limit=int(os.getenv("MORA1_LIMITE_ENVIOS","100"))
+    if not 1<=limit<=500:raise ValueError("MORA1_LIMITE_ENVIOS debe estar entre 1 y 500")
     info=json.loads(getenv_required("MI_JSON"))
     creds=ServiceCredentials.from_service_account_info(info,scopes=["https://www.googleapis.com/auth/spreadsheets"])
     gc=gspread.authorize(creds)
@@ -34,6 +34,14 @@ def main():
     hc,queue=rows(target.worksheet("COLA_ENVIO"))
     hca,campaigns=rows(target.worksheet("CAMPAÑAS"))
     hp,templates=rows(target.worksheet("PLANTILLAS"))
+    he,clients=rows(target.worksheet("CLIENTES"))
+    client_map={}
+    duplicate_clients=set()
+    for item in clients:
+        key=ref(value(item,he,"REFERENCIA"))
+        if not key:continue
+        if key in client_map:duplicate_clients.add(key)
+        else:client_map[key]=item
     required={"ID_ENVIO","ID_CAMPANA","REFERENCIA","EMAIL","ASUNTO","CUERPO","PLANTILLA","ESTADO","FECHA_PROG","FECHA_ENVIO","INTENTOS","ERROR","ID_MENSAJE"}
     if not required.issubset(hc):raise RuntimeError("COLA_ENVIO faltan "+str(sorted(required-set(hc))))
     if not {"ID_CAMPANA","ESTADO"}.issubset(hca):raise RuntimeError("CAMPAÑAS sin ID_CAMPAÑA/ESTADO")
@@ -66,10 +74,12 @@ def main():
         expected=DIAS_ESPECIALES.get(day) or ("T001" if day%2==0 else None)
         if expected!=template or template not in active_templates:continue
         camp=value(r,hc,"ID_CAMPANA")
-        if camp!=f"MORA1-{stamp}-{template}" or camp_map.get(camp)!="PROGRAMADA":continue
+        if camp!=f"MORA1-{stamp}-{template}" or camp_map.get(camp)!="BORRADOR":continue
         if parse_date(value(r,hc,"FECHA_PROG"))!=today:continue
         if value(r,hc,"FECHA_ENVIO") or value(r,hc,"ID_MENSAJE"):continue
+        if reference in duplicate_clients or reference not in client_map:continue
         email=value(r,hc,"EMAIL").strip()
+        if email.lower()!=value(client_map[reference],he,"EMAIL").strip().lower():continue
         if not re.fullmatch(r"[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+",email):continue
         if not value(r,hc,"ASUNTO") or not value(r,hc,"CUERPO"):continue
         # Misma referencia y plantilla ya enviada hoy, o especial desde comienzo de ciclo.
@@ -82,6 +92,8 @@ def main():
             if dt is None or dt>=(today if template=="T001" else first):duplicate=True;break
         if not duplicate:candidates.append((row_number,r))
     print("Elegibles tras revalidación:",len(candidates),"| Límite:",limit)
+    if len(candidates)>limit:
+        raise RuntimeError("Hay más candidatos que el límite diario; no se enviará un lote parcial ni se perderá el resto.")
     if not candidates:return
     # Credenciales Gmail separadas: token OAuth de cuenta autorizada, nunca de servicio Sheets.
     oauth=OAuthCredentials(
@@ -100,11 +112,14 @@ def main():
         # Comprobar estado en Sheet inmediatamente antes de cada intento.
         if norm(ws.cell(row_number,hc["ESTADO"]+1).value)!="BORRADOR":continue
         attempts=int(value(r,hc,"INTENTOS") or "0")
+        if attempts!=0:continue
         ws.update_cell(row_number,hc["ESTADO"]+1,"ENVIANDO")
         ws.update_cell(row_number,hc["INTENTOS"]+1,attempts+1)
         try:
             msg=EmailMessage()
             msg["To"]=value(r,hc,"EMAIL")
+            msg["From"]="estructurados@gobravo.com.co"
+            msg["Reply-To"]="estructurados@gobravo.com.co"
             msg["Subject"]=value(r,hc,"ASUNTO")
             msg.set_content("Mensaje de BRAVO. Consulta la versión HTML de este correo.")
             msg.add_alternative(value(r,hc,"CUERPO"),subtype="html")
