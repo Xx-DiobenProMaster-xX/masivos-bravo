@@ -21,7 +21,14 @@ def getenv_required(k):
     return v
 def main():
     simulacion=os.getenv("MORA1_MODO_SIMULACION","").strip().upper()=="SI"
-    if not simulacion and os.getenv("MORA1_ENVIOS_REALES","").strip().upper()!="SI":
+    piloto=os.getenv("MORA1_PILOTO","").strip().upper()=="SI"
+    piloto_ref=ref(os.getenv("MORA1_PILOTO_REFERENCIA",""))
+    if piloto:
+        if os.getenv("MORA1_PILOTO_CONFIRMACION","")!="ENVIAR_UN_CLIENTE" or not re.fullmatch(r"[0-9]{5,20}",piloto_ref):
+            raise RuntimeError("Piloto requiere referencia numérica válida y confirmación ENVIAR_UN_CLIENTE.")
+        if simulacion:
+            raise RuntimeError("Piloto real incompatible con modo simulación.")
+    if not simulacion and not piloto and os.getenv("MORA1_ENVIOS_REALES","").strip().upper()!="SI":
         print("MORA1: ENVÍOS REALES DESACTIVADOS. Ningún mensaje enviado.")
         return
     limit=int(os.getenv("MORA1_LIMITE_ENVIOS","100"))
@@ -97,6 +104,12 @@ def main():
             dt=parse_date(value(prior,hc,"FECHA_ENVIO")) or parse_date(value(prior,hc,"FECHA_PROG"))
             if dt is None or dt>=(today if template=="T001" else first):duplicate=True;break
         if not duplicate:candidates.append((row_number,r))
+    if piloto:
+        candidates=[entry for entry in candidates if ref(value(entry[1],hc,"REFERENCIA"))==piloto_ref]
+        limit=1
+        print("PILOTO CONTROLADO: una referencia elegible; no se habilita producción diaria.")
+        if len(candidates)!=1:
+            raise RuntimeError("La referencia piloto no tiene exactamente un BORRADOR elegible HOY. NO se envió ningún mensaje.")
     print("Fecha Bogotá:",today.isoformat())
     print("Elegibles tras revalidación:",len(candidates),"| Límite:",limit)
     print("Capacidad disponible según configuración:",max(0,limit-len(candidates)))

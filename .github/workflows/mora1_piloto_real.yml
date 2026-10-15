@@ -1,0 +1,39 @@
+name: Mora 1 - Piloto real una referencia
+on:
+  workflow_dispatch:
+    inputs:
+      referencia:
+        description: "Referencia real elegible de Mora 1 (solo números)"
+        required: true
+        type: string
+      confirmacion:
+        description: "Escribe ENVIAR_UN_CLIENTE para autorizar este único envío real"
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: mora1-dioben-diagnostico
+  cancel-in-progress: false
+jobs:
+  piloto:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      MI_JSON: ${{ secrets.MI_JSON }}
+      GMAIL_CLIENT_ID: ${{ secrets.GMAIL_CLIENT_ID }}
+      GMAIL_CLIENT_SECRET: ${{ secrets.GMAIL_CLIENT_SECRET }}
+      GMAIL_REFRESH_TOKEN: ${{ secrets.GMAIL_REFRESH_TOKEN }}
+      MORA1_PILOTO: SI
+      MORA1_PILOTO_REFERENCIA: ${{ inputs.referencia }}
+      MORA1_PILOTO_CONFIRMACION: ${{ inputs.confirmacion }}
+      MORA1_ENVIOS_REALES: NO
+      MORA1_LIMITE_ENVIOS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install gspread google-auth google-api-python-client
+      - name: Piloto una referencia con validaciones reales y cola persistente
+        run: python mora1_enviar_programados.py
