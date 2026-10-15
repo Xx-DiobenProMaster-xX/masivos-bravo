@@ -9,6 +9,7 @@ from google.oauth2.credentials import Credentials as OAuthCredentials
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from mora1_dioben import norm, ref, parse_date, rows, value, ID_DI0BEN, ID_MASIVOS, DIAS_ESPECIALES
+from mora1_reglas import puede_enviar
 
 TZ=ZoneInfo("America/Bogota")
 TRUE={"TRUE","VERDADERO","SI","1","X"}
@@ -76,9 +77,8 @@ def main():
         if norm(value(startrow,hs,"MORA ACTUAL"))!="MORA 1" or norm(value(startrow,hs,"EXCLUIR CORREO")) in TRUE:continue
         first=parse_date(value(startrow,hs,"FECHA_INICIO_MORA_1"))
         if first is None or first>today:continue
-        day=(today-first).days+1
-        expected=DIAS_ESPECIALES.get(day) or ("T001" if day%2==0 else None)
-        if expected!=template or template not in active_templates:continue
+        if not puede_enviar(value(startrow,hs,"MORA ACTUAL"),"SI","MORA_1",value(startrow,hs,"EXCLUIR CORREO"),first,today,template):continue
+        if template not in active_templates:continue
         camp=value(r,hc,"ID_CAMPANA")
         if camp!=f"MORA1-{stamp}-{template}" or camp_map.get(camp)!="BORRADOR":continue
         if parse_date(value(r,hc,"FECHA_PROG"))!=today:continue
