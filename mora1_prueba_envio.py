@@ -22,6 +22,8 @@ creds=Credentials(
 service=build("gmail","v1",credentials=creds,cache_discovery=False)
 msg=EmailMessage()
 msg["To"]=address
+msg["From"]="estructurados@gobravo.com.co"
+msg["Reply-To"]="estructurados@gobravo.com.co"
 msg["Subject"]="[PRUEBA] Automatización Mora 1 - Bravo"
 msg.set_content("Correo de prueba técnica de Mora 1. No es una notificación de cobro. No requiere ninguna acción.")
 msg.add_alternative("<p><strong>PRUEBA TÉCNICA</strong> — Automatización Mora 1.</p><p>Este correo no es una notificación de cobro y no requiere ninguna acción.</p>",subtype="html")
@@ -30,5 +32,6 @@ if not response.get("id"):
     raise SystemExit("Gmail no devolvió ID de mensaje; revisar estado.")
 print("OK: Gmail aceptó exactamente un correo de prueba.")
 print("ID del mensaje:",response["id"])
-print("Revisa en el mensaje recibido la dirección del remitente.")
+print("Remitente solicitado: estructurados@gobravo.com.co")
+print("Verifica el remitente real en el mensaje recibido: Gmail puede sustituir un alias no autorizado.")
 print("No se consultó ni modificó Google Sheets; no hubo mensajes para clientes de Mora 1.")
