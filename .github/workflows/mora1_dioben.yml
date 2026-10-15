@@ -15,6 +15,8 @@ jobs:
     env:
       MI_JSON: ${{ secrets.MI_JSON }}
       MORA1_PREPARAR_BORRADORES: ${{ vars.MORA1_PREPARAR_BORRADORES }}
+      MORA1_ENVIOS_REALES: ${{ vars.MORA1_ENVIOS_REALES }}
+      MORA1_LIMITE_ENVIOS: ${{ vars.MORA1_LIMITE_ENVIOS }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -24,6 +26,15 @@ jobs:
       - run: python mora1_dioben.py
       - name: Preparar borradores aprobados (nunca enviar)
         run: python mora1_preparar_borradores.py
+      - name: Enviar Mora 1 (solo si habilitado explícitamente)
+        if: ${{ vars.MORA1_ENVIOS_REALES == 'SI' }}
+        env:
+          MORA1_GMAIL_CLIENT_ID: ${{ secrets.MORA1_GMAIL_CLIENT_ID }}
+          MORA1_GMAIL_CLIENT_SECRET: ${{ secrets.MORA1_GMAIL_CLIENT_SECRET }}
+          MORA1_GMAIL_REFRESH_TOKEN: ${{ secrets.MORA1_GMAIL_REFRESH_TOKEN }}
+        run: |
+          pip install google-api-python-client google-auth-httplib2
+          python mora1_enviar_programados.py
       - name: Guardar resumen de simulacion
         if: always()
         uses: actions/upload-artifact@v4
