@@ -1,0 +1,19 @@
+name: Mora 1 - Diagnóstico referencia 3103398488
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  diagnostico:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      MI_JSON: ${{ secrets.MI_JSON }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install gspread google-auth
+      - name: Consultar motivo exacto sin enviar correo
+        run: python mora1_diagnosticar_3103398488.py
