@@ -65,6 +65,7 @@ def main():
         else:follow_map[k]=r
     camp_map={value(r,hca,"ID_CAMPANA"):norm(value(r,hca,"ESTADO")) for r in campaigns}
     active_templates={norm(value(r,hp,"ID_PLANTILLA")) for r in templates if norm(value(r,hp,"ESTADO"))=="ACTIVA" and value(r,hp,"CUERPO") and value(r,hp,"ASUNTO")}
+    template_map={norm(value(r,hp,"ID_PLANTILLA")):r for r in templates if norm(value(r,hp,"ID_PLANTILLA")) in active_templates}
     from collections import Counter
     counts=Counter(value(row,hc,"ID_ENVIO") for row in queue if value(row,hc,"ID_ENVIO").startswith("MORA1-"))
     if any(v>1 for v in counts.values()):
@@ -173,13 +174,26 @@ def main():
         if blocked:
             print("OMITIDO: otro envío/intento de la misma referencia.")
             continue
+        # La hoja PLANTILLAS es la fuente única de contenido; nunca reutilizar HTML antiguo de COLA_ENVIO.
+        tpl=template_map[template]
+        actual_name=value(r,hc,"NOMBRE") or "Cliente"
+        replacements={"{{NOMBRE}}":actual_name,"{{REFERENCIA}}":reference}
+        subject=value(tpl,hp,"ASUNTO")
+        rendered=value(tpl,hp,"CUERPO")
+        for placeholder,content in replacements.items():
+            subject=subject.replace(placeholder,content)
+            rendered=rendered.replace(placeholder,content)
+        if re.search(r"\{\{[^{}]+\}\}",subject+rendered):
+            print("OMITIDO: variables sin resolver en plantilla",template)
+            continue
+        rendered=html_mora1(rendered)
         msg=EmailMessage()
         msg["To"]=value(r,hc,"EMAIL")
         msg["From"]="estructurados@gobravo.com.co"
         msg["Reply-To"]="estructurados@gobravo.com.co"
-        msg["Subject"]=value(r,hc,"ASUNTO")
+        msg["Subject"]=subject
         msg.set_content("Mensaje de BRAVO. Consulta la versión HTML de este correo.")
-        msg.add_alternative(html_mora1(value(r,hc,"CUERPO")),subtype="html")
+        msg.add_alternative(rendered,subtype="html")
         raw=base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")
         # Guardar intento ANTES del contacto con Gmail.
         ws.batch_update([
