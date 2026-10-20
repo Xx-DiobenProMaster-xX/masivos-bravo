@@ -1,5 +1,5 @@
 """Envío independiente Mora 1: deshabilitado por defecto; valida cada cliente antes de Gmail."""
-import os, json, re, base64
+import os, json, re, base64, time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from email.message import EmailMessage
@@ -137,17 +137,25 @@ def main():
     ws=target.worksheet("COLA_ENVIO")
     sent=0
     from gspread.utils import rowcol_to_a1
+    from gspread.exceptions import APIError
+    def safe_read(row_number):
+        for attempt in range(6):
+            try: return ws.row_values(row_number)
+            except APIError as exc:
+                if getattr(exc.response,'status_code',None)!=429 or attempt==5: raise
+                print('429 Sheets: esperando para reintentar lectura',attempt+1)
+                time.sleep(min(65,3*(2**attempt)))
     for row_number,r in candidates[:limit]:
         if datetime.now(TZ).date()!=today:
             print("CORTE: cambió la fecha de Bogotá.")
             break
-        live=ws.row_values(row_number)
+        live=safe_read(row_number)
         if value(live,hc,"ID_ENVIO")!=value(r,hc,"ID_ENVIO"):continue
         if norm(value(live,hc,"ESTADO"))!="BORRADOR" or int(value(live,hc,"INTENTOS") or "0")!=0:continue
         if value(live,hc,"ID_MENSAJE") or value(live,hc,"FECHA_ENVIO"):continue
         if value(live,hc,"EMAIL")!=value(r,hc,"EMAIL"):continue
         # Releer cola antes de cada envío: detectar otros intentos o estados ambiguos.
-        fresh=ws.get_all_values()[1:]
+        fresh=queue
         reference=ref(value(r,hc,"REFERENCIA"))
         template=norm(value(r,hc,"PLANTILLA"))
         begin=parse_date(value(follow_map[reference],hs,"FECHA_INICIO_MORA_1"))
@@ -175,7 +183,7 @@ def main():
             {"range":rowcol_to_a1(row_number,hc["ESTADO"]+1),"values":[["ENVIANDO"]]},
             {"range":rowcol_to_a1(row_number,hc["INTENTOS"]+1),"values":[[1]]}
         ],value_input_option="RAW")
-        locked=ws.row_values(row_number)
+        locked=safe_read(row_number)
         if value(locked,hc,"ID_ENVIO")!=value(r,hc,"ID_ENVIO") or norm(value(locked,hc,"ESTADO"))!="ENVIANDO" or value(locked,hc,"INTENTOS")!="1":
             raise RuntimeError("No se confirmó la reserva en Sheets; envío cancelado.")
         try:
