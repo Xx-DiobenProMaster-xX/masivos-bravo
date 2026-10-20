@@ -1,0 +1,24 @@
+name: Mora 1 - Verificar HTML y sintaxis
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'mora1_html.py'
+      - 'mora1_preparar_borradores.py'
+      - 'mora1_enviar_programados.py'
+      - 'plantillas_mora1_ui.py'
+      - 'test_mora1_html.py'
+permissions:
+  contents: read
+jobs:
+  validar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Comprobar sintaxis de todos los módulos Mora 1
+        run: python -m py_compile mora1_html.py mora1_preparar_borradores.py mora1_enviar_programados.py plantillas_mora1_ui.py
+      - name: Comprobar conversión HTML y reglas Mora 1
+        run: python -m unittest -v test_mora1_html.py test_mora1_reglas.py

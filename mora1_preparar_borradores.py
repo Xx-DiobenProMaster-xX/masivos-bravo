@@ -60,7 +60,7 @@ def vincular_campanas_borrador(destino):
         day=key.split("-")[1]
         if key in current:
             existing=current[key]
-            if norm(value(existing,hp,"ESTADO")) not in {"BORRADOR","PREPARADA","PROGRAMADA"}:
+            if norm(value(existing,hp,"ESTADO")) not in {"BORRADOR","PREPARADA","PROGRAMADA","EN PROCESO"}:
                 raise RuntimeError("Campaña existente con estado no seguro: "+key)
             if norm(value(existing,hp,"PLANTILLA"))!=code:
                 raise RuntimeError("Campaña existente tiene otra plantilla: "+key)
@@ -76,11 +76,9 @@ def vincular_campanas_borrador(destino):
                 "COMENTARIOS":"Creada por GitHub Actions; requiere revisión y autorización manual."
             }
             new_campaigns.append([datos.get(h,"") for h,_ in sorted(hp.items(),key=lambda x:x[1])])
-    # Volver a BORRADOR únicamente las campañas MORA1 implicadas.
+    # No modificar estados existentes de CAMPAÑAS (pueden estar en proceso).
     reset=[]
-    for key in grouped:
-        if key in current and norm(value(current[key],hp,"ESTADO"))!="BORRADOR":
-            reset.append({"range":rowcol_to_a1(current_rows[key],hp["ESTADO"]+1),"values":[["BORRADOR"]]})
+    # Las campañas existentes conservan su estado; el motor maneja BORRADOR y EN PROCESO.
     if reset:
         wc.batch_update(reset,value_input_option="RAW")
     if new_campaigns:
