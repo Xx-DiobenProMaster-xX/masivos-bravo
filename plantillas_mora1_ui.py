@@ -1,5 +1,6 @@
 """Editor visual para las cinco plantillas de Mora 1. Nunca envia correos."""
 import html
+from mora1_html import html_mora1
 import json
 import os
 from datetime import datetime
@@ -14,8 +15,8 @@ SPREADSHEET_ID = "1VGdEUGRDFxBjKRLF1KF7EcHIBf3f8ujtN3iPm6TatjI"
 SHEET = "PLANTILLAS"
 REQUIRED = {"ID_PLANTILLA", "ASUNTO", "CUERPO", "ESTADO"}
 TZ = ZoneInfo("America/Bogota")
-CODES = ["MORA101", "MORA102", "MORA103", "MORA104", "MORA105"]
-DAYS = {"MORA101": 4, "MORA102": 10, "MORA103": 15, "MORA104": 19, "MORA105": 24}
+CODES = ["T001", "MORA101", "MORA102", "MORA103", "MORA104", "MORA105"]
+DAYS = {"T001": "pares", "MORA101": 4, "MORA102": 10, "MORA103": 15, "MORA104": 19, "MORA105": 24}
 
 SUBJECTS = {
     "MORA101": "Recordatorio sobre tu mensualidad pendiente",
@@ -43,6 +44,8 @@ BRAVO_LOGO_URL = "https://drive.google.com/uc?export=view&id=13kK3v4FiyXFa4UzM_a
 
 def default_html(code):
     """Plantilla BRAVO morado/turquesa; conserva mensaje y cierre."""
+    if code == "T001":
+        return html_mora1("Estimado(a) {{NOMBRE}}:\n\nNos permitimos informarle que su obligación actualmente presenta una mora. Queremos acompañarle para regularizar su situación.\n\n**Línea de atención:** WhatsApp 301 241 1885.\n\nAtentamente, **Bravo S.A.S.**")
     subject = html.escape(SUBJECTS[code])
     message = html.escape(MESSAGES[code])
     closing = html.escape(CLOSINGS[code])
@@ -167,22 +170,22 @@ def render_plantillas_mora1():
     if error:
         st.error(f"No fue posible leer PLANTILLAS: {error}")
     code = st.selectbox("Selecciona la plantilla", CODES, format_func=lambda c: f"{c} — Día {DAYS[c]}")
-    st.caption(f"Campaña especial del día {DAYS[code]} de Mora 1")
-    subject = st.text_input("Asunto", value=saved.get(code, {}).get("subject") or SUBJECTS[code], key=f"subject_{code}")
+    st.caption("Recordatorio habitual en días pares de Mora 1" if code=="T001" else f"Campaña especial del día {DAYS[code]} de Mora 1")
+    subject = st.text_input("Asunto", value=saved.get(code, {}).get("subject") or SUBJECTS.get(code, "Apartado Mensual Bravo"), key=f"subject_{code}")
     def aplicar_diseno_bravo():
-        st.session_state[f"body_{code}"] = default_html(code)
+        st.session_state[f"body_{code}"] = html_mora1(saved.get(code, {}).get("body") or default_html(code)) if code=="T001" else default_html(code)
     st.button("Aplicar diseño corporativo BRAVO a esta plantilla",
               key=f"diseno_bravo_{code}", on_click=aplicar_diseno_bravo)
     body = st.text_area("Contenido HTML editable", value=saved.get(code, {}).get("body") or default_html(code),
                         height=320, key=f"body_{code}")
     st.subheader("Vista previa (datos ficticios)")
-    components.html(preview_html(body), height=440, scrolling=True)
+    components.html(preview_html(html_mora1(body)), height=440, scrolling=True)
     if st.button("Guardar esta plantilla en Google Sheets", type="primary"):
         if not subject.strip() or not body.strip():
             st.error("El asunto y el contenido no pueden estar vacíos.")
         else:
             try:
-                row_number = save_template(code, subject.strip(), body)
+                row_number = save_template(code, subject.strip(), html_mora1(body))
                 st.success(f"{code} guardada y verificada en PLANTILLAS, fila {row_number}.")
                 st.cache_data.clear()
             except Exception as exc:
