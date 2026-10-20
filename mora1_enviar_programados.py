@@ -149,6 +149,16 @@ def main():
                 if getattr(exc.response,'status_code',None)!=429 or attempt==5: raise
                 print('429 Sheets: esperando para reintentar lectura',attempt+1)
                 time.sleep(min(65,3*(2**attempt)))
+    def safe_write(updates):
+        for attempt in range(6):
+            try:
+                return ws.batch_update(updates,value_input_option="RAW")
+            except APIError as exc:
+                status=getattr(getattr(exc,'response',None),'status_code',None)
+                if status!=429 or attempt==5: raise
+                pause=min(65,4*(2**attempt))
+                print('Sheets 429 escritura; reintento idempotente en',pause,'segundos')
+                time.sleep(pause)
     for row_number,r in candidates[:limit]:
         if datetime.now(TZ).date()!=today:
             print("CORTE: cambió la fecha de Bogotá.")
@@ -196,10 +206,10 @@ def main():
         msg.add_alternative(rendered,subtype="html")
         raw=base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")
         # Guardar intento ANTES del contacto con Gmail.
-        ws.batch_update([
+        safe_write([
             {"range":rowcol_to_a1(row_number,hc["ESTADO"]+1),"values":[["ENVIANDO"]]},
             {"range":rowcol_to_a1(row_number,hc["INTENTOS"]+1),"values":[[1]]}
-        ],value_input_option="RAW")
+        ])
         locked=safe_read(row_number)
         if value(locked,hc,"ID_ENVIO")!=value(r,hc,"ID_ENVIO") or norm(value(locked,hc,"ESTADO"))!="ENVIANDO" or value(locked,hc,"INTENTOS")!="1":
             raise RuntimeError("No se confirmó la reserva en Sheets; envío cancelado.")
@@ -213,12 +223,13 @@ def main():
             print("AVISO: Gmail no devolvió ID; conservar ENVIANDO y conciliar manualmente.")
             continue
         try:
-            # Evidencia primero; ESTADO final después.
-            ws.batch_update([
+            # Escribir Gmail ID, fecha y estado en UNA sola solicitud idempotente.
+            # Gmail ya aceptó: nunca reintentar el envío, solo la escritura del registro.
+            safe_write([
                 {"range":rowcol_to_a1(row_number,hc["ID_MENSAJE"]+1),"values":[[message_id]]},
-                {"range":rowcol_to_a1(row_number,hc["FECHA_ENVIO"]+1),"values":[[datetime.now(TZ).strftime("%d/%m/%Y %H:%M:%S")]]}
-            ],value_input_option="RAW")
-            ws.update_cell(row_number,hc["ESTADO"]+1,"ENVIADO")
+                {"range":rowcol_to_a1(row_number,hc["FECHA_ENVIO"]+1),"values":[[datetime.now(TZ).strftime("%d/%m/%Y %H:%M:%S")]]},
+                {"range":rowcol_to_a1(row_number,hc["ESTADO"]+1),"values":[["ENVIADO"]]}
+            ])
             sent+=1
         except Exception as exc:
             print("CRÍTICO: Gmail aceptó el mensaje pero Sheets falló; NO restaurar a BORRADOR:",type(exc).__name__)
