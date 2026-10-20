@@ -147,7 +147,7 @@ def main():
         if value(live,hc,"ID_MENSAJE") or value(live,hc,"FECHA_ENVIO"):continue
         if value(live,hc,"EMAIL")!=value(r,hc,"EMAIL"):continue
         # Releer cola antes de cada envío: detectar otros intentos o estados ambiguos.
-        fresh=ws.get_all_values()[1:]
+        fresh=queue
         reference=ref(value(r,hc,"REFERENCIA"))
         template=norm(value(r,hc,"PLANTILLA"))
         begin=parse_date(value(follow_map[reference],hs,"FECHA_INICIO_MORA_1"))
