@@ -89,7 +89,7 @@ def main():
         if not puede_enviar(value(startrow,hs,"MORA ACTUAL"),"SI","MORA_1",value(startrow,hs,"EXCLUIR CORREO"),first,today,template):continue
         if template not in active_templates:continue
         camp=value(r,hc,"ID_CAMPANA")
-        if camp!=f"MORA1-{stamp}-{template}" or camp_map.get(camp) not in {"BORRADOR","EN PROCESO"}:continue
+        if camp!=f"MORA1-{stamp}-{template}" or camp_map.get(camp) not in {"BORRADOR","PROGRAMADA","EN PROCESO"}:continue
         if parse_date(value(r,hc,"FECHA_PROG"))!=today:continue
         if value(r,hc,"FECHA_ENVIO") or value(r,hc,"ID_MENSAJE"):continue
         if reference in duplicate_clients or reference not in client_map:continue
