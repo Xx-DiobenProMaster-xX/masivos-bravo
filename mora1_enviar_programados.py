@@ -10,6 +10,7 @@ from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from mora1_dioben import norm, ref, parse_date, rows, value, ID_DI0BEN, ID_MASIVOS, DIAS_ESPECIALES
 from mora1_reglas import puede_enviar
+from mora1_html import html_mora1
 
 TZ=ZoneInfo("America/Bogota")
 TRUE={"TRUE","VERDADERO","SI","1","X"}
@@ -87,7 +88,7 @@ def main():
         if not puede_enviar(value(startrow,hs,"MORA ACTUAL"),"SI","MORA_1",value(startrow,hs,"EXCLUIR CORREO"),first,today,template):continue
         if template not in active_templates:continue
         camp=value(r,hc,"ID_CAMPANA")
-        if camp!=f"MORA1-{stamp}-{template}" or camp_map.get(camp)!="BORRADOR":continue
+        if camp!=f"MORA1-{stamp}-{template}" or camp_map.get(camp) not in {"BORRADOR","EN PROCESO"}:continue
         if parse_date(value(r,hc,"FECHA_PROG"))!=today:continue
         if value(r,hc,"FECHA_ENVIO") or value(r,hc,"ID_MENSAJE"):continue
         if reference in duplicate_clients or reference not in client_map:continue
@@ -110,6 +111,8 @@ def main():
         print("PILOTO CONTROLADO: una referencia elegible; no se habilita producción diaria.")
         if len(candidates)!=1:
             raise RuntimeError("La referencia piloto no tiene exactamente un BORRADOR elegible HOY. NO se envió ningún mensaje.")
+    print("Campañas Mora 1 del día y estado:",{k:v for k,v in camp_map.items() if k.startswith("MORA1-"+today.strftime("%Y%m%d"))})
+    print("BORRADORES Mora 1 del día:",sum(1 for x in queue if value(x,hc,"ID_ENVIO").startswith("MORA1-"+today.strftime("%Y%m%d")) and norm(value(x,hc,"ESTADO"))=="BORRADOR"))
     print("Fecha Bogotá:",today.isoformat())
     print("Elegibles tras revalidación:",len(candidates),"| Límite:",limit)
     print("Capacidad disponible según configuración:",max(0,limit-len(candidates)))
@@ -176,7 +179,7 @@ def main():
         msg["Reply-To"]="estructurados@gobravo.com.co"
         msg["Subject"]=value(r,hc,"ASUNTO")
         msg.set_content("Mensaje de BRAVO. Consulta la versión HTML de este correo.")
-        msg.add_alternative(value(r,hc,"CUERPO"),subtype="html")
+        msg.add_alternative(html_mora1(value(r,hc,"CUERPO")),subtype="html")
         raw=base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")
         # Guardar intento ANTES del contacto con Gmail.
         ws.batch_update([
