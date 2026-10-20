@@ -45,7 +45,13 @@ BRAVO_LOGO_URL = "https://drive.google.com/uc?export=view&id=13kK3v4FiyXFa4UzM_a
 def default_html(code):
     """Plantilla BRAVO morado/turquesa; conserva mensaje y cierre."""
     if code == "T001":
-        return html_mora1("Estimado(a) {{NOMBRE}}:\n\nNos permitimos informarle que su obligación actualmente presenta una mora. Queremos acompañarle para regularizar su situación.\n\n**Línea de atención:** WhatsApp 301 241 1885.\n\nAtentamente, **Bravo S.A.S.**")
+        return html_mora1("""Estimado(a) {{NOMBRE}}:
+
+Nos permitimos informarle que su obligación actualmente presenta una mora. Queremos acompañarle para regularizar su situación.
+
+**Línea de atención:** WhatsApp 301 241 1885.
+
+Atentamente, **Bravo S.A.S.**""")
     subject = html.escape(SUBJECTS[code])
     message = html.escape(MESSAGES[code])
     closing = html.escape(CLOSINGS[code])
