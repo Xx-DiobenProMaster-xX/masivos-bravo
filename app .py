@@ -7442,7 +7442,7 @@ elif menu == "📝 Plantillas":
                     if not cuerpo_prueba.strip() or not asunto_prueba.strip():
                         st.error("La plantilla no tiene asunto o contenido.")
                     else:
-                        if not re.search(r"<\\s*(html|body|table)\\b", cuerpo_prueba, flags=re.I):
+                        if not re.search(r"<\s*(?:!doctype|html|body|table|div|p)\b", cuerpo_prueba, flags=re.I):
                             cuerpo_prueba = envolver_html_bravo(cuerpo_prueba)
                         try:
                             resultado_prueba = enviar_mensaje_gmail(
