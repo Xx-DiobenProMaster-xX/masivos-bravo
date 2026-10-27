@@ -1954,6 +1954,27 @@ def main():
     )
 
 
+    # Desactivado por defecto hasta verificar un envío controlado.
+    envio_real = os.getenv("APARTADOS_ENVIOS_REALES", "NO").strip().upper() == "SI"
+    cola_apartados = None
+    ids_apartados = set()
+    gmail_apartados = None
+    enviados_reales = 0
+    if envio_real:
+        libro_masivos = gc.open_by_key(MASIVOS_SPREADSHEET_ID)
+        cola_apartados = libro_masivos.worksheet("COLA_ENVIO")
+        filas_cola = cola_apartados.get_all_values()
+        encabezados_cola = [str(z).strip() for z in filas_cola[0]]
+        ids_apartados = {
+            z[encabezados_cola.index("ID_ENVIO")]
+            for z in filas_cola[1:]
+            if len(z) > encabezados_cola.index("ID_ENVIO")
+        }
+        gmail_apartados = cliente_gmail()
+        print("ENVIO AUTOMATICO ACTIVO: se reserva cada mensaje antes de Gmail.")
+    else:
+        print("MODO DIAGNOSTICO: envíos desactivados. Para activar usar APARTADOS_ENVIOS_REALES=SI.")
+
     candidatos_hoy = 0
 
     enviar = 0
@@ -2159,6 +2180,62 @@ def main():
 
 
             enviar += 1
+            if envio_real:
+                # ID estable por referencia, fecha de cuota y tipo de plantilla.
+                id_envio = f"ENV-ALDIA-{fecha_pago.strftime('%Y%m%d')}-{referencia}-{plantilla}"
+                if id_envio in ids_apartados:
+                    print(f"YA REGISTRADO {id_envio}: no reenviar.")
+                else:
+                    cuerpo = html_al_dia(nombre, fecha_pago, dias)
+                    asunto = "Recordatorio de tu apartado mensual - Bravo"
+                    valores = {
+                        "ID_ENVIO": id_envio,
+                        "ID_CAMPAÑA": f"ALDIA-{hoy.strftime('%Y%m%d')}",
+                        "REFERENCIA": referencia,
+                        "NOMBRE": nombre,
+                        "EMAIL": email,
+                        "PLANTILLA": plantilla,
+                        "ASUNTO": asunto,
+                        "ESTADO": "ENVIANDO",
+                        "FECHA_PROG": ahora.strftime("%d/%m/%Y %H:%M"),
+                        "INTENTOS": 1,
+                        "CUERPO": cuerpo,
+                        "ENCARGADO": "AUTO",
+                    }
+                    registro = [valores.get(h, "") for h in encabezados_cola]
+                    # No se llama Gmail a menos que se registre una reserva duradera.
+                    cola_apartados.append_row(registro, value_input_option="RAW")
+                    indices = [i + 1 for i, v in enumerate(cola_apartados.col_values(1)) if v == id_envio]
+                    if len(indices) != 1:
+                        raise RuntimeError("Reserva no confirmada o duplicada para apartado: " + id_envio)
+                    ids_apartados.add(id_envio)
+                    fila_col = indices[0]
+                    try:
+                        resultado = enviar_gmail(gmail_apartados, email, asunto, cuerpo)
+                        id_gmail = str(resultado.get("id", "")).strip()
+                        if not id_gmail:
+                            raise RuntimeError("Gmail no devolvió ID de mensaje")
+                        marca = datetime.now(TZ).strftime("%d/%m/%Y %H:%M:%S")
+                        actualizaciones = []
+                        for campo, dato in (
+                            ("ID_MENSAJE", id_gmail),
+                            ("FECHA_ENVIO", marca),
+                            ("ESTADO", "ENVIADO"),
+                        ):
+                            if campo not in encabezados_cola:
+                                raise RuntimeError("COLA_ENVIO no tiene " + campo)
+                            from gspread.utils import rowcol_to_a1
+                            coord = rowcol_to_a1(fila_col, encabezados_cola.index(campo) + 1)
+                            actualizaciones.append({"range": coord, "values": [[dato]]})
+                        cola_apartados.batch_update(actualizaciones, value_input_option="RAW")
+                        enviados_reales += 1
+                        print("ENVIADO ALDIA", plantilla, referencia)
+                    except Exception as error:
+                        # Gmail puede haberlo aceptado; nunca restaurar a BORRADOR.
+                        print("ENVIO/REGISTRO AMBIGUO", referencia, type(error).__name__)
+                        print("Se mantiene ENVIANDO: conciliar manualmente antes de reintentar.")
+                        raise
+
 
 
         # ====================================================
@@ -2295,17 +2372,17 @@ def main():
 
 
     print(
-        "MODO DIAGNÓSTICO:"
+        "ENVIO REAL:" if envio_real else "MODO DIAGNÓSTICO:"
     )
 
 
     print(
-        "0 correos enviados"
+        f"{enviados_reales} correos enviados" if envio_real else "0 correos enviados"
     )
 
 
     print(
-        "0 filas modificadas"
+        "COLA_ENVIO actualizada" if envio_real else "0 filas modificadas"
     )
 
 
