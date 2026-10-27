@@ -141,13 +141,9 @@ MASIVOS_ID = "1VGdEUGRDFxBjKRLF1KF7EcHIBf3f8ujtN3iPm6TatjI"
 CARTERA_BEREX_ID = "13Vf32LzRI2V95dIUqfevzm-ZmsDR3d17UTre_7XJ-UU"
 EXCLUSIONES_ID = "15sbBsZcMj8PMkHXByLqjcuqtvsY_2FGYiwhkKPmfIYM"
 
-GMAIL_FROM = "acuerdosRTD@resuelvetudeuda.com"
+GMAIL_FROM = "estructurados@gobravo.com.co"
 GMAIL_SCOPES = [
-    "openid",
-    "https://www.googleapis.com/auth/userinfo.email",
-    "https://www.googleapis.com/auth/userinfo.profile",
     "https://www.googleapis.com/auth/gmail.send",
-    "https://www.googleapis.com/auth/drive.file",
 ]
 
 
@@ -761,10 +757,11 @@ def main():
             sent += 1
             print(f"ENVIADO {pid} {rr} -> {email}")
         except Exception as e:
-            update_cell_by_header(queue_ws, row_num, qhlist, "ERROR", str(e)[:500])
-            update_cell_by_header(queue_ws, row_num, qhlist, "ESTADO", "ERROR")
+            # Preserve ENVIANDO: Gmail may have accepted the mail already.
             errors += 1
-            print(f"ERROR {pid} {rr}: {e}")
+            print(f"ERROR / ENVIO AMBIGUO {pid} {rr}: {type(e).__name__}")
+            print("Conciliar Gmail antes de cualquier reintento.")
+
 
     recalc_campaign(book, campaign_id)
     print(json.dumps({

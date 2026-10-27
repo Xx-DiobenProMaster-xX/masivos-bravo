@@ -1,0 +1,23 @@
+name: Validar automatizaciones de correos
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'pab_send_auto.py'
+      - 'bienvenida_estructurados.py'
+      - 'recordatorios_al_dia.py'
+      - '.github/workflows/pab-automatico.yml'
+      - '.github/workflows/bienvenida-estructurados.yml'
+      - '.github/workflows/recordatorios_al_dia.yml'
+permissions:
+  contents: read
+jobs:
+  sintaxis:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validar sintaxis sin correos ni acceso a Sheets
+        run: python -m py_compile pab_send_auto.py bienvenida_estructurados.py recordatorios_al_dia.py

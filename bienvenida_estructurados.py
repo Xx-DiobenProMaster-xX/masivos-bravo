@@ -353,13 +353,13 @@ def agregar_cola(ws, id_envio, ref, nombre, email, fecha_liquidacion, estado, me
 def main():
     ahora = datetime.now(TZ)
     hoy = ahora.date()
-    limite = hoy - timedelta(days=3)
-    inicio_mes = hoy.replace(day=1)
+    # Se envía únicamente al día siguiente de la fecha C del Pipeline.
+    fecha_objetivo = hoy - timedelta(days=1)
 
     print("=" * 76)
     print("BIENVENIDA A ESTRUCTURADOS - PRODUCCIÓN")
     print(f"Fecha/hora Colombia: {ahora.strftime('%d/%m/%Y %H:%M:%S')}")
-    print(f"Primera puesta al día: liquidaciones {inicio_mes.strftime('%d/%m/%Y')} a {limite.strftime('%d/%m/%Y')}")
+    print(f"Fecha Pipeline objetivo (ayer): {fecha_objetivo.strftime('%d/%m/%Y')}")
     print("=" * 76)
 
     raw = os.environ.get("MI_JSON", "").strip()
@@ -388,7 +388,7 @@ def main():
         est = es_true(f[15] if len(f)>15 else "")
         if not fecha or not ref or not est:
             continue
-        if not (inicio_mes <= fecha <= limite):
+        if fecha != fecha_objetivo:
             continue
         eventos[(ref, fecha)] = {"REF": ref, "FECHA": fecha, "FUENTE": fuente}
 
@@ -420,23 +420,30 @@ def main():
             print(f"SIN_CORREO | {ref} | {fecha.strftime('%d/%m/%Y')}")
             continue
 
+        # Reserva antes de Gmail para que la misma bienvenida no se envíe dos veces.
+        agregar_cola(cola, id_envio, ref, nombre, email, fecha, "ENVIANDO")
+        existentes.add(id_envio)
+        coincidentes = [i + 1 for i, v in enumerate(cola.col_values(1)) if v == id_envio]
+        if len(coincidentes) != 1:
+            raise RuntimeError("Reserva duplicada o no confirmada de bienvenida.")
+        fila_cola = coincidentes[0]
         try:
             html = html_bienvenida_estructurados(nombre)
             resp = enviar_gmail(gmail, email, ASUNTO_BIENVENIDA, html)
-            mid = str(resp.get("id",""))
-            agregar_cola(cola, id_envio, ref, nombre, email, fecha, "ENVIADO", mid)
-            existentes.add(id_envio)
+            mid = str(resp.get("id", "")).strip()
+            if not mid:
+                raise RuntimeError("Gmail no devolvió ID: envío ambiguo.")
+            cola.batch_update([
+                {"range": f"M{fila_cola}", "values": [[mid]]},
+                {"range": f"J{fila_cola}", "values": [[datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S")]]},
+                {"range": f"H{fila_cola}", "values": [["ENVIADO"]]},
+            ], value_input_option="RAW")
             enviados += 1
             print(f"ENVIADO | {ref} | {fecha.strftime('%d/%m/%Y')} | {ocultar_email(email)}")
         except Exception as exc:
             errores += 1
-            err = str(exc)[:450]
-            try:
-                agregar_cola(cola, id_envio, ref, nombre, email, fecha, "ERROR", "", err)
-                existentes.add(id_envio)
-            except Exception:
-                pass
-            print(f"ERROR | {ref} | {fecha.strftime('%d/%m/%Y')} | {err}")
+            print(f"ERROR/ENVIO AMBIGUO | {ref} | {type(exc).__name__}")
+            print("Mantener ENVIANDO y conciliar Gmail antes de reintentar.")
 
     print("=" * 76)
     print(f"ENVIADOS: {enviados}")
