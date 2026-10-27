@@ -2,9 +2,8 @@ name: Recordatorios apartados mensuales
 
 on:
   schedule:
-    # Todos los días a las 8:00 a. m. hora Colombia
-    # Colombia = UTC-5, por eso 13:00 UTC
-    - cron: "0 13 * * *"
+    # Todos los días a las 09:00 Colombia; separado de PaB y Mora 1 para disminuir cuota Sheets.
+    - cron: "0 14 * * *"
 
   workflow_dispatch:
 
@@ -22,6 +21,7 @@ jobs:
       GOOGLE_CLIENT_ID: ${{ secrets.GMAIL_CLIENT_ID }}
       GOOGLE_CLIENT_SECRET: ${{ secrets.GMAIL_CLIENT_SECRET }}
       GOOGLE_REFRESH_TOKEN: ${{ secrets.GMAIL_REFRESH_TOKEN }}
+      APARTADOS_ENVIOS_REALES: ${{ vars.APARTADOS_ENVIOS_REALES }}
 
     steps:
       - name: Descargar repositorio
