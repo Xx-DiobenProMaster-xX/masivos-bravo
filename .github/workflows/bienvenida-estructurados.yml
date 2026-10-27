@@ -2,6 +2,12 @@ name: Diagnóstico bienvenida estructurados
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '30 13 * * *' # 08:30 Colombia
+
+concurrency:
+  group: bienvenida-estructurados
+  cancel-in-progress: false
 
 jobs:
   diagnostico:
