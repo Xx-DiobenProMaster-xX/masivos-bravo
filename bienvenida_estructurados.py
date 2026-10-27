@@ -353,13 +353,13 @@ def agregar_cola(ws, id_envio, ref, nombre, email, fecha_liquidacion, estado, me
 def main():
     ahora = datetime.now(TZ)
     hoy = ahora.date()
-    limite = hoy - timedelta(days=3)
-    inicio_mes = hoy.replace(day=1)
+    # Se envía únicamente al día siguiente de la fecha C del Pipeline.
+    fecha_objetivo = hoy - timedelta(days=1)
 
     print("=" * 76)
     print("BIENVENIDA A ESTRUCTURADOS - PRODUCCIÓN")
     print(f"Fecha/hora Colombia: {ahora.strftime('%d/%m/%Y %H:%M:%S')}")
-    print(f"Primera puesta al día: liquidaciones {inicio_mes.strftime('%d/%m/%Y')} a {limite.strftime('%d/%m/%Y')}")
+    print(f"Fecha Pipeline objetivo (ayer): {fecha_objetivo.strftime('%d/%m/%Y')}")
     print("=" * 76)
 
     raw = os.environ.get("MI_JSON", "").strip()
@@ -388,7 +388,7 @@ def main():
         est = es_true(f[15] if len(f)>15 else "")
         if not fecha or not ref or not est:
             continue
-        if not (inicio_mes <= fecha <= limite):
+        if fecha != fecha_objetivo:
             continue
         eventos[(ref, fecha)] = {"REF": ref, "FECHA": fecha, "FUENTE": fuente}
 
