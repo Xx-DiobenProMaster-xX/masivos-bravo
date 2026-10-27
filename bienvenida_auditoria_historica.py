@@ -55,7 +55,11 @@ def main():
     for f in cola[1:]:
         if valor(f,"PLANTILLA") == PLANTILLA_ID or valor(f,"ID_ENVIO").startswith("ENV-ESTBIENV-"):
             otras_bienvenidas.setdefault(norm_ref(valor(f,"REFERENCIA")), []).append(f)
+    from bienvenida_estructurados import maestro_clientes, maestro_asignaciones_vigentes, correo_valido
+    contactos = maestro_clientes(gc)
+    respaldos = maestro_asignaciones_vigentes(gc, hoy)
     totales = {"ENVIADO":0,"AMBIGUO":0,"EXCLUIDO":0,"PENDIENTE":0,"REVISAR_OTRO_REGISTRO":0}
+    calidad = {"PENDIENTE_CON_CORREO":0,"PENDIENTE_SIN_CORREO":0,"PENDIENTE_SIN_NOMBRE":0}
     for referencia,fecha in sorted(eventos,key=lambda x:(x[1],x[0])):
         ident = f"ENV-ESTBIENV-{fecha:%Y%m%d}-{referencia}-{PLANTILLA_ID}"
         actual = por_id.get(ident)
@@ -71,12 +75,21 @@ def main():
         else:
             estado="PENDIENTE"
         totales[estado]+=1
+        if estado == "PENDIENTE":
+            a, b = contactos.get(referencia, {}), respaldos.get(referencia, {})
+            correo_a = str(a.get("EMAIL","")).strip().lower()
+            correo_b = str(b.get("EMAIL","")).strip().lower()
+            correo = correo_a if correo_valido(correo_a) else correo_b if correo_valido(correo_b) else ""
+            if correo: calidad["PENDIENTE_CON_CORREO"]+=1
+            else: calidad["PENDIENTE_SIN_CORREO"]+=1
+            if not str(a.get("NOMBRE","") or b.get("NOMBRE","")).strip(): calidad["PENDIENTE_SIN_NOMBRE"]+=1
         # No mostrar correos, nombres ni datos personales en logs.
         if estado!="ENVIADO":
             print(f"{estado} | REF {referencia} | FECHA {fecha:%d/%m/%Y} | ORIGEN {eventos[(referencia,fecha)]}")
     print("VENTANA:",START.isoformat(),"a",hasta.isoformat())
     print("EVENTOS ESTRUCTURADOS:",len(eventos))
     print("RESULTADO AUDITORÍA:",json.dumps(totales,ensure_ascii=False))
+    print("CALIDAD CONTACTOS PENDIENTES:",json.dumps(calidad,ensure_ascii=False))
     print("SOLO LECTURA: sin Gmail, sin escrituras a Google Sheets.")
 
 if __name__=="__main__":
