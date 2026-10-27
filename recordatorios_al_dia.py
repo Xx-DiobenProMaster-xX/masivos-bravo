@@ -1956,15 +1956,20 @@ def main():
 
     # Desactivado por defecto hasta verificar un envío controlado.
     envio_real = os.getenv("APARTADOS_ENVIOS_REALES", "NO").strip().upper() == "SI"
+    limite_envios = max(0, min(int(os.getenv("APARTADOS_LIMITE_ENVIOS", "1")), 200))
     cola_apartados = None
     ids_apartados = set()
     gmail_apartados = None
     enviados_reales = 0
     if envio_real:
+        print(f"LIMITE DE ENVIOS APARTADOS EN ESTA EJECUCION: {limite_envios}")
         libro_masivos = gc.open_by_key(MASIVOS_SPREADSHEET_ID)
         cola_apartados = libro_masivos.worksheet("COLA_ENVIO")
         filas_cola = cola_apartados.get_all_values()
         encabezados_cola = [str(z).strip() for z in filas_cola[0]]
+        requeridas = {"ID_ENVIO", "ID_CAMPAÑA", "ESTADO", "FECHA_PROG", "INTENTOS", "ID_MENSAJE", "FECHA_ENVIO", "CUERPO"}
+        if not requeridas.issubset(encabezados_cola):
+            raise RuntimeError("COLA_ENVIO sin columnas requeridas: " + str(sorted(requeridas - set(encabezados_cola))))
         ids_apartados = {
             z[encabezados_cola.index("ID_ENVIO")]
             for z in filas_cola[1:]
@@ -2180,6 +2185,9 @@ def main():
 
 
             enviar += 1
+            if envio_real and enviados_reales >= limite_envios:
+                print("LIMITE ALCANZADO: no iniciar más envíos.")
+                continue
             if envio_real:
                 # ID estable por referencia, fecha de cuota y tipo de plantilla.
                 id_envio = f"ENV-ALDIA-{fecha_pago.strftime('%Y%m%d')}-{referencia}-{plantilla}"

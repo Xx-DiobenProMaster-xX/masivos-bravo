@@ -22,6 +22,7 @@ jobs:
       GOOGLE_CLIENT_SECRET: ${{ secrets.GMAIL_CLIENT_SECRET }}
       GOOGLE_REFRESH_TOKEN: ${{ secrets.GMAIL_REFRESH_TOKEN }}
       APARTADOS_ENVIOS_REALES: ${{ vars.APARTADOS_ENVIOS_REALES }}
+      APARTADOS_LIMITE_ENVIOS: ${{ vars.APARTADOS_LIMITE_ENVIOS || '1' }}
 
     steps:
       - name: Descargar repositorio
