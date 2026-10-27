@@ -1735,12 +1735,12 @@ def main():
 
     print(
         "RECORDATORIOS AL DÍA "
-        "- MODO DIAGNÓSTICO"
+        "- ENVÍO CONTROLADO / DIAGNÓSTICO"
     )
 
     print(
-        "NO ENVÍA CORREOS "
-        "Y NO MODIFICA COLA_ENVIO"
+        "ENVÍA SOLO SI APARTADOS_ENVIOS_REALES=SI; "
+        "DE LO CONTRARIO SOLO DIAGNÓSTICO"
     )
 
     print(
