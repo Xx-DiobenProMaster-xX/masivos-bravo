@@ -19,8 +19,21 @@ creds=Credentials(
 )
 try:
     creds.refresh(Request())
-except RefreshError:
-    print("ERROR: Google rechazó la renovación OAuth. Consultar con el administrador.")
+except RefreshError as exc:
+    # Clasificar sin publicar el texto original potencialmente sensible.
+    error = str(exc).lower()
+    if "invalid_client" in error or "unauthorized_client" in error:
+        motivo = "CLIENTE_OAUTH_INVALIDO: revisar GMAIL_CLIENT_ID y GMAIL_CLIENT_SECRET"
+    elif "invalid_grant" in error:
+        motivo = "INVALID_GRANT: refresh token inválido/revocado o de otro cliente OAuth"
+    elif "invalid_scope" in error:
+        motivo = "PERMISO_INVALIDO: revisar autorización gmail.send"
+    elif "access_denied" in error:
+        motivo = "ACCESO_DENEGADO: comprobar políticas Workspace"
+    else:
+        motivo = "REFRESH_RECHAZADO: consultar configuración OAuth y administrador"
+    print("ERROR DE AUTENTICACIÓN:", motivo)
+    print("Los secretos y la respuesta completa de Google no se muestran.")
     raise SystemExit(1)
 except Exception as exc:
     print("ERROR: problema de conexión al renovar OAuth:",type(exc).__name__)
