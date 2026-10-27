@@ -78,7 +78,7 @@ def main():
         str(f[encabezado["PLANTILLA"]])==PLANTILLA_ID)
        and norm_ref(f[encabezado["REFERENCIA"]])==ref
        for f in actuales[1:]
-       if len(f)>max(encabezado.values())
+       if len(f)>max(encabezado["ID_ENVIO"],encabezado["REFERENCIA"],encabezado["PLANTILLA"])
     ):
       print("OMITIDO POR REGISTRO NUEVO",ref)
       continue
