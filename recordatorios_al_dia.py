@@ -1,4 +1,5 @@
 import os
+import time
 import re
 import json
 import base64
@@ -2212,6 +2213,8 @@ def main():
                     }
                     registro = [valores.get(h, "") for h in encabezados_cola]
                     # No se llama Gmail a menos que se registre una reserva duradera.
+                    time.sleep(3)
+                    # No reintentar un append ambiguo para evitar reservas duplicadas.
                     cola_apartados.append_row(registro, value_input_option="RAW")
                     indices = [i + 1 for i, v in enumerate(cola_apartados.col_values(1)) if v == id_envio]
                     if len(indices) != 1:
@@ -2235,7 +2238,16 @@ def main():
                             from gspread.utils import rowcol_to_a1
                             coord = rowcol_to_a1(fila_col, encabezados_cola.index(campo) + 1)
                             actualizaciones.append({"range": coord, "values": [[dato]]})
-                        cola_apartados.batch_update(actualizaciones, value_input_option="RAW")
+                        for intento in range(5):
+                            try:
+                                cola_apartados.batch_update(actualizaciones, value_input_option="RAW")
+                                break
+                            except Exception as error:
+                                if ("429" not in str(error) and "quota exceeded" not in str(error).lower()) or intento == 4:
+                                    raise
+                                espera = 20 * (intento + 1)
+                                print(f"CUOTA SHEETS 429: esperar {espera}s antes de guardar confirmación.")
+                                time.sleep(espera)
                         enviados_reales += 1
                         print("ENVIADO ALDIA", plantilla, referencia)
                     except Exception as error:
