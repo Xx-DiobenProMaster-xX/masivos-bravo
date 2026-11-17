@@ -1,0 +1,32 @@
+name: Alianzas - Piloto confirmacion de lectura
+on:
+  workflow_dispatch:
+    inputs:
+      confirmar_envio:
+        description: "Escribe ENVIAR_UNA_PRUEBA para enviar UN mensaje a dioben2523@gmail.com; de lo contrario simula"
+        required: true
+        default: SIMULAR
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: alianzas-piloto-lectura
+  cancel-in-progress: false
+jobs:
+  piloto:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GMAIL_CLIENT_ID: ${{ secrets.GMAIL_CLIENT_ID }}
+      GMAIL_CLIENT_SECRET: ${{ secrets.GMAIL_CLIENT_SECRET }}
+      GMAIL_REFRESH_TOKEN: ${{ secrets.GMAIL_REFRESH_TOKEN }}
+      ALIANZAS_PRUEBA_CONFIRMADA: ${{ inputs.confirmar_envio }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Instalar dependencias
+        run: pip install google-auth google-api-python-client
+      - name: Enviar solo a destinatario fijo si se autoriza
+        run: python alianzas_prueba_lectura.py
