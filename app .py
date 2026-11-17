@@ -6455,6 +6455,41 @@ elif menu == "🤝 Alianzas":
                 else:
                     st.info("Selecciona al menos un banco para ver el ejemplo.")
 
+            with st.expander("🧪 Prueba de remitente Alianzas (sin clientes reales)", expanded=False):
+                st.caption(
+                    "Esta prueba envía exclusivamente a dioben2523@gmail.com. "
+                    "No crea campañas, no modifica COLA_ENVIO y no utiliza los 397 contactos."
+                )
+                st.write("**Remitente solicitado:** " + ALIANZAS_RESPUESTAS_EMAIL)
+                st.write("**Destinatario:** dioben2523@gmail.com")
+                cred_prueba_alianzas = credenciales_gmail_sesion()
+                if cred_prueba_alianzas is None:
+                    st.warning("Conecta Google en Configuración antes de hacer la prueba.")
+                else:
+                    if st.button(
+                        "📨 Enviar UNA prueba desde Alianzas",
+                        key="alianzas_prueba_remitente_streamlit",
+                        use_container_width=True
+                    ):
+                        try:
+                            respuesta_prueba = enviar_mensaje_gmail(
+                                cred_prueba_alianzas,
+                                "dioben2523@gmail.com",
+                                "[PRUEBA ALIANZAS] Verificar remitente Bravo",
+                                html_alianzas_bravo("Cliente de prueba", "Banco de prueba"),
+                                remitente=ALIANZAS_RESPUESTAS_EMAIL,
+                            )
+                            st.success(
+                                "Gmail aceptó el envío de prueba. Comprueba en el correo recibido "
+                                "que el campo De diga alianzasco@gobravo.com.co. "
+                                "ID: " + str(respuesta_prueba.get("id", ""))
+                            )
+                        except Exception as error_prueba:
+                            st.error(
+                                "No se envió la prueba de Alianzas: "
+                                + str(error_prueba)
+                            )
+
             with st.form("form_alianzas"):
                 nombre_c = st.text_input(
                     "Nombre de la campaña",
