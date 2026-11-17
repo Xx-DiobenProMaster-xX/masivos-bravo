@@ -10,6 +10,7 @@ from googleapiclient.discovery import build
 REMITENTE = "alianzasco@gobravo.com.co"
 DESTINO = "dioben2523@gmail.com"
 GMAIL_SEND = "https://www.googleapis.com/auth/gmail.send"
+GMAIL_SETTINGS = "https://www.googleapis.com/auth/gmail.settings.basic"
 
 def main():
     habilitado = os.environ.get("ALIANZAS_PRUEBA_CONFIRMADA", "").strip()
@@ -20,18 +21,28 @@ def main():
         print("Solicitud de lectura: cabecera Disposition-Notification-To (no garantizada).")
         return
 
-    variables = ("GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET", "GMAIL_REFRESH_TOKEN")
+    variables = ("GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET", "ALIANZAS_GMAIL_REFRESH_TOKEN")
     if any(not os.environ.get(k) for k in variables):
         raise RuntimeError("Faltan credenciales OAuth de Gmail configuradas en GitHub.")
 
     credenciales = Credentials(
         token=None,
-        refresh_token=os.environ["GMAIL_REFRESH_TOKEN"],
+        refresh_token=os.environ["ALIANZAS_GMAIL_REFRESH_TOKEN"],
         token_uri="https://oauth2.googleapis.com/token",
         client_id=os.environ["GMAIL_CLIENT_ID"],
         client_secret=os.environ["GMAIL_CLIENT_SECRET"],
-        scopes=[GMAIL_SEND],
+        scopes=[GMAIL_SEND, GMAIL_SETTINGS],
     )
+    svc = build("gmail", "v1", credentials=credenciales, cache_discovery=False)
+    aliases = svc.users().settings().sendAs().list(userId="me").execute().get("sendAs", [])
+    autorizado = any(
+        str(alias.get("sendAsEmail", "")).strip().lower() == REMITENTE
+        and alias.get("verificationStatus") == "accepted"
+        for alias in aliases
+    )
+    if not autorizado:
+        raise RuntimeError("ENVIO BLOQUEADO: Alianzas no esta verificado como Enviar correo como en la cuenta OAuth. No se envio mensaje.")
+    print("OK: remitente Alianzas verificado en Gmail.")
     msg = EmailMessage()
     msg["From"] = f"Bravo Alianzas <{REMITENTE}>"
     msg["To"] = DESTINO
@@ -52,7 +63,6 @@ def main():
         <p style="color:#666;font-size:13px">No es una comunicacion de cobro.</p>
         </td></tr></table></body></html>""", subtype="html")
     raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")
-    svc = build("gmail", "v1", credentials=credenciales, cache_discovery=False)
     resultado = svc.users().messages().send(userId="me", body={"raw":raw}).execute()
     if not resultado.get("id"):
         raise RuntimeError("Gmail no devolvio identificador de mensaje; verificar antes de repetir.")
@@ -61,7 +71,7 @@ def main():
     print("Remitente solicitado:",REMITENTE)
     print("Destino:",DESTINO)
     print("Fecha Bogotá:",datetime.now(ZoneInfo("America/Bogota")).strftime("%Y-%m-%d %H:%M"))
-    print("NOTA: Gmail API no confirma que se preserve la cabecera de lectura, ni que el destinatario emita confirmacion.")
+    print("NOTA: cuenta personal gmail.com no soporta confirmaciones de lectura nativas.")
     print("Verificar manualmente el remitente real y el mensaje recibido antes de usar masivos.")
 
 if __name__=="__main__":
