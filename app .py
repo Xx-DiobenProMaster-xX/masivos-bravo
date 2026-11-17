@@ -178,6 +178,7 @@ GOOGLE_OAUTH_SCOPES = [
     "https://www.googleapis.com/auth/userinfo.email",
     "https://www.googleapis.com/auth/userinfo.profile",
     "https://www.googleapis.com/auth/gmail.send",
+    "https://www.googleapis.com/auth/gmail.settings.basic",
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/drive.file",
 ]
@@ -439,8 +440,52 @@ def construir_mensaje_gmail(destinatario, asunto, cuerpo_html, remitente=GMAIL_F
     return {"raw": raw}
 
 
+def verificar_remitente_alianzas(credenciales, servicio):
+    """Verifica la autorización REAL de Gmail antes de enviar campañas Alianzas.
+
+    Evita que Gmail sustituya el From por la cuenta personal del operador.
+    La verificación solo se cachea durante la sesión y se invalida al cambiar
+    las credenciales o el usuario OAuth.
+    """
+    correo_oauth = str(st.session_state.get("google_oauth_email", "") or "").strip().lower()
+    token_actual = str(getattr(credenciales, "refresh_token", "") or "")
+    cache_key = (correo_oauth, token_actual)
+    if st.session_state.get("alianzas_remitente_verificado_key") == cache_key:
+        return
+    scopes = set(getattr(credenciales, "scopes", None) or [])
+    permiso = "https://www.googleapis.com/auth/gmail.settings.basic"
+    if permiso not in scopes:
+        raise ValueError(
+            "Para enviar desde Alianzas hay que reconectar Gmail en Configuración "
+            "y autorizar la comprobación de remitentes. No se envió ningún correo."
+        )
+    try:
+        lista = servicio.users().settings().sendAs().list(userId="me").execute()
+    except Exception as exc:
+        raise ValueError(
+            "No se pudo verificar en Gmail el remitente Alianzas. "
+            "Reconecta Google en Configuración y prueba nuevamente. "
+            "No se envió ningún correo."
+        ) from exc
+    permitidos = lista.get("sendAs", [])
+    coincide = any(
+        str(alias.get("sendAsEmail", "")).strip().lower() == ALIANZAS_RESPUESTAS_EMAIL.lower()
+        and str(alias.get("verificationStatus", "")).strip().lower() == "accepted"
+        for alias in permitidos
+    )
+    if not coincide:
+        raise ValueError(
+            "Gmail no confirma alianzasco@gobravo.com.co como remitente verificado "
+            "en la cuenta conectada. Revisa Gmail > Configuración > Cuentas > "
+            "Enviar mensaje como. No se envió ningún correo."
+        )
+    st.session_state["alianzas_remitente_verificado_key"] = cache_key
+
+
 def enviar_mensaje_gmail(credenciales, destinatario, asunto, cuerpo_html, remitente=GMAIL_FROM):
     servicio = build("gmail", "v1", credentials=credenciales, cache_discovery=False)
+    if str(remitente).strip().lower() == ALIANZAS_RESPUESTAS_EMAIL.lower():
+        verificar_remitente_alianzas(credenciales, servicio)
     body = construir_mensaje_gmail(destinatario, asunto, cuerpo_html, remitente=remitente)
     return servicio.users().messages().send(userId="me", body=body).execute()
 
