@@ -3443,11 +3443,10 @@ def leer_fuente_alianzas_deposito_extra():
             " " if unicodedata.category(c).startswith("Z") else c
             for c in texto
             if not unicodedata.category(c).startswith("C")
-            or c in "\\t\\r\\n"
         )
         texto = unicodedata.normalize("NFKD", texto)
         texto = "".join(c for c in texto if unicodedata.category(c) != "Mn")
-        return re.sub(r"[\\s_]+", " ", texto).strip().casefold()
+        return re.sub(r"[\s_]+", " ", texto).strip().casefold()
 
     cabecera = [clave_cabecera_de(x) for x in valores[0]]
     campos_esperados = {
