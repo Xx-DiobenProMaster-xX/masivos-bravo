@@ -3727,6 +3727,26 @@ def referencias_excluidas_normalizadas():
     }
 
 
+# Criterio único para los correos de Alianzas · Depósito Extra.
+# Igual al filtro estricto anterior de preparación; no habilita direcciones adicionales.
+PATRON_CORREO_DE = re.compile(
+    r"[A-Za-z0-9.!#$%&'*+/=?^`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+"
+)
+
+
+def motivo_correo_de(valor):
+    correo = str(valor or "").strip()
+    if not correo:
+        return "Correo vacío"
+    if re.search(r"\s", correo):
+        return "Contiene espacios"
+    if correo.count("@") != 1:
+        return "Debe contener una sola @"
+    if not PATRON_CORREO_DE.fullmatch(correo):
+        return "Formato no admitido (usuario o dominio)"
+    return ""
+
+
 def preparar_clientes_campana(fila_campana):
     """Devuelve candidatos elegibles. No escribe ni envía nada."""
     resumen_vacio = {
@@ -3855,9 +3875,7 @@ def preparar_clientes_campana(fila_campana):
 
     if tipo == "ALIANZAS_DE":
         # Nunca permitir destinatarios incompletos o malformados en Depósito Extra.
-        mask_sin_email = ~base["EMAIL"].astype(str).str.fullmatch(
-            r"[A-Za-z0-9.!#$%&'*+/=?^`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+"
-        ).fillna(False)
+        mask_sin_email = base["EMAIL"].apply(lambda correo: bool(motivo_correo_de(correo)))
     else:
         mask_sin_email = base["EMAIL"].apply(valor_vacio)
     n_sin_email = entero_seguro(mask_sin_email.sum())
@@ -6672,13 +6690,28 @@ elif menu == "🤝 Alianzas":
             st.warning("No hay registros válidos con referencia, nombre, banco y DE_Tradicional mayor a cero.")
         else:
             total_de = len(base_de)
-            con_mail_de = int(base_de["EMAIL"].astype(str).str.fullmatch(
-                r"[^@\s]+@[^@\s]+\.[^@\s]+"
-            ).fillna(False).sum())
+            motivos_de = base_de["EMAIL"].apply(motivo_correo_de)
+            con_mail_de = int(motivos_de.eq("").sum())
             met1,met2,met3 = st.columns(3)
             met1.metric("Referencias DE válidas", total_de)
             met2.metric("Con correo", con_mail_de)
             met3.metric("Sin correo", total_de-con_mail_de)
+            rechazados_de = base_de.loc[motivos_de.ne(""), ["REFERENCIA", "NOMBRE", "BANCO", "EMAIL"]].copy()
+            rechazados_de["MOTIVO"] = motivos_de.loc[motivos_de.ne("")].values
+            with st.expander(f"🔎 Revisar correos rechazados · {len(rechazados_de)}", expanded=False):
+                st.caption(
+                    "Los registros rechazados no se incluyen en la campaña. "
+                    "Corrige sus correos en la pestaña DE. Esta tabla no modifica Google Sheets."
+                )
+                st.dataframe(rechazados_de, use_container_width=True, hide_index=True)
+                if not rechazados_de.empty:
+                    st.download_button(
+                        "📥 Descargar rechazados CSV",
+                        data=rechazados_de.to_csv(index=False).encode("utf-8-sig"),
+                        file_name="alianzas_de_correos_rechazados.csv",
+                        mime="text/csv",
+                        key="de_exportar_rechazados",
+                    )
             bancos_de = sorted(x for x in base_de["BANCO"].unique() if str(x).strip())
             bancos_elegidos_de = st.multiselect(
                 "Bancos a incluir · Depósito Extra",
