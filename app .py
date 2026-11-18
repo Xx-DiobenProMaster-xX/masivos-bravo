@@ -3390,7 +3390,19 @@ def leer_fuente_alianzas_deposito_extra():
     No cruza datos con bases de ilocalizados ni con Info_Clientes_V2.
     """
     fuente = obtener_gc().open_by_key(ALIANZAS_SOURCE_SPREADSHEET_ID)
-    valores = fuente.worksheet(ALIANZAS_DE_TAB).get("A:J")
+    # Mismo acceso que cargar_hoja(): values_get devuelve un diccionario
+    # estándar; evita Worksheet.get()/ValueRange y el proxy sin len().
+    hoja_segura = str(ALIANZAS_DE_TAB).replace("'", "''")
+    respuesta = fuente.values_get(f"'{hoja_segura}'!A:J")
+    if isinstance(respuesta, _GSpreadRetryProxy):
+        # Compatibilidad defensiva con posibles proxies cacheados en Streamlit.
+        respuesta = respuesta._obj
+    if not isinstance(respuesta, dict):
+        raise ValueError(
+            "La lectura de DE no devolvió el diccionario esperado de Google Sheets. "
+            f"Tipo recibido: {type(respuesta).__name__}"
+        )
+    valores = respuesta.get("values", [])
     columnas = ["REFERENCIA", "NOMBRE", "BANCO", "DE_TRADICIONAL", "EMAIL", "ENCARGADO"]
     if len(valores) < 2:
         return pd.DataFrame(columns=columnas)
