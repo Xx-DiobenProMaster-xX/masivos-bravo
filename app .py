@@ -3387,7 +3387,7 @@ def leer_fuente_alianzas_deposito_extra():
         return pd.DataFrame(columns=columnas)
 
     # Evitar mapear equivocadamente si alguien cambia la estructura de DE.
-    cabecera = [normalizar(x).strip() for x in valores[0]]
+    cabecera = [normalizar(x).strip().lower() for x in valores[0]]
     campos_esperados = {
         0: {"referencia"},
         3: {"primer nombre", "primer_nombre"},
@@ -6608,7 +6608,9 @@ elif menu == "🤝 Alianzas":
             st.warning("No hay registros válidos con referencia, nombre, banco y DE_Tradicional mayor a cero.")
         else:
             total_de = len(base_de)
-            con_mail_de = int(base_de["EMAIL"].astype(str).str.contains("@",regex=False).sum())
+            con_mail_de = int(base_de["EMAIL"].astype(str).str.fullmatch(
+                r"[^@\s]+@[^@\s]+\.[^@\s]+"
+            ).fillna(False).sum())
             met1,met2,met3 = st.columns(3)
             met1.metric("Referencias DE válidas", total_de)
             met2.metric("Con correo", con_mail_de)
