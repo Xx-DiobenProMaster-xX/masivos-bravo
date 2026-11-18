@@ -5,6 +5,7 @@ on:
       - 'app .py'
       - 'alianzas_deposito_extra.py'
       - 'test_alianzas_deposito_extra.py'
+      - 'test_gspread_proxy_values.py'
   workflow_dispatch:
 permissions:
   contents: read
@@ -19,4 +20,4 @@ jobs:
       - name: Comprobar sintaxis del app y módulo
         run: python -m py_compile "app .py" alianzas_deposito_extra.py
       - name: Probar formato y HTML sin clientes ni correos
-        run: python -m unittest -v test_alianzas_deposito_extra.py
+        run: python -m unittest -v test_alianzas_deposito_extra.py test_gspread_proxy_values.py

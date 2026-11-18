@@ -79,6 +79,12 @@ def _wrap_gspread_result(value):
     if isinstance(value, _GSpreadRetryProxy):
         return value
 
+    # Worksheet.get() devuelve ValueRange, una subclase de list del módulo
+    # gspread. Es información (filas), NO un cliente/worksheet con métodos.
+    # Envolverlo en _GSpreadRetryProxy rompe len(), índices y recorridos.
+    if isinstance(value, (list, tuple, dict, set)):
+        return value
+
     module = getattr(value.__class__, "__module__", "")
     if module.startswith("gspread"):
         return _GSpreadRetryProxy(value)
@@ -6593,8 +6599,8 @@ elif menu == "🤝 Alianzas":
         st.info(
             "Fuente: Masivos_Descuento_LIocalizado → pestaña DE. "
             "A = Referencia, D = Primer Nombre, F = Banco, G = DE_Tradicional. "
-            "Los correos se completan por referencia desde Info_Clientes_V2 y las bases BRAVO; "
-            "no se modifica la base de ilocalizados."
+            "J = Correo. La fuente DE se consulta directamente y no se modifica "
+            "la base de ilocalizados."
         )
         if st.button("🔄 Consultar base DE", key="de_actualizar"):
             st.cache_data.clear()
