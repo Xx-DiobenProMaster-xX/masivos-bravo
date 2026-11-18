@@ -150,6 +150,9 @@ HOJA_CARTERA_BEREX = "2. Cartera Berex"
 ALIANZAS_SOURCE_SPREADSHEET_ID = "1BO59uLIIPwkLcz3LmVEiM7_9IewAzabfBmztbcpYS_c"
 HOJA_ALIANZAS_DESTINO = "ALIANZAS"
 ALIANZAS_TEMPLATE_ID = "TAL001"
+ALIANZAS_DE_TEMPLATE_ID = "TALDE001"
+ALIANZAS_DE_TAB = "DE"
+from alianzas_deposito_extra import html_deposito_extra, monto_de, dinero_colombiano
 PREVENCION_TEMPLATE_ID = "TPREV001"
 MORA_ESTADOS_SPREADSHEET_ID = "1jcPPhtF2YK3Kr7P_A0Mgh2OqhOfnVWB2to3UPoSH5tE"
 HOJA_MORA_COMISION = "Comisión"
@@ -410,7 +413,7 @@ def remitente_segun_campana(campana):
         plantilla = str(campana.get("PLANTILLA", "") or "").strip().upper()
     except (AttributeError, TypeError):
         return GMAIL_FROM
-    return ALIANZAS_RESPUESTAS_EMAIL if tipo == "ALIANZAS" or plantilla == ALIANZAS_TEMPLATE_ID else GMAIL_FROM
+    return ALIANZAS_RESPUESTAS_EMAIL if tipo in {"ALIANZAS", "ALIANZAS_DE"} or plantilla in {ALIANZAS_TEMPLATE_ID, ALIANZAS_DE_TEMPLATE_ID} else GMAIL_FROM
 
 
 def construir_mensaje_gmail(destinatario, asunto, cuerpo_html, remitente=GMAIL_FROM):
@@ -1556,6 +1559,9 @@ def construir_html_campana(id_plantilla, fila, cuerpo_base=""):
 
     if idp == ALIANZAS_TEMPLATE_ID:
         return html_alianzas_bravo(fila.get("NOMBRE", ""), fila.get("BANCO", ""))
+
+    if idp == ALIANZAS_DE_TEMPLATE_ID:
+        return html_deposito_extra(fila.get("NOMBRE", ""), fila.get("BANCO", ""), fila.get("DE_TRADICIONAL", ""), BRAVO_LOGO_URL, ALIANZAS_WHATSAPP)
 
     if idp == PREVENCION_TEMPLATE_ID:
         return html_prevencion_bravo(fila.get("NOMBRE", ""), fila.get("FECHA_PROXIMO_PAGO", ""))
@@ -3357,6 +3363,73 @@ def cargar_alianzas_local():
     except Exception: return pd.DataFrame(columns=["REFERENCIA","CEDULA","BANCO","EMAIL","NOMBRE","ENCARGADO","FUENTE_PESTANA","FECHA_ACTUALIZACION"])
 
 
+def plantilla_alianzas_de_virtual():
+    return pd.Series({
+        "ID_PLANTILLA": ALIANZAS_DE_TEMPLATE_ID,
+        "NOMBRE": "Alianzas · Depósito Extra",
+        "ASUNTO": "¡Una oportunidad especial con {{BANCO}}! | Bravo",
+        "CUERPO": "",
+        "ESTADO": "ACTIVA",
+    })
+
+
+def leer_fuente_alianzas_deposito_extra():
+    """Fuente: Masivos_Descuento_LIocalizado / DE (gid 323455966).
+
+    Columnas A=Referencia D=Primer Nombre F=Banco G=DE_Tradicional.
+    La fuente DE no contiene correos; se cruzan por referencia con
+    Info_Clientes_V2, CLIENTES y ALIANZAS, sin sobrescribir sus bases.
+    """
+    fuente = obtener_gc().open_by_key(ALIANZAS_SOURCE_SPREADSHEET_ID)
+    valores = fuente.worksheet(ALIANZAS_DE_TAB).get("A:G")
+    if len(valores) < 2:
+        return pd.DataFrame(columns=["REFERENCIA", "NOMBRE", "BANCO", "DE_TRADICIONAL", "EMAIL", "ENCARGADO"])
+
+    # La hoja DE no proporciona email. Obtenerlo sin recurrir a cifras falsas.
+    contactos = {}
+    for base in (alianzas, clientes):
+        if base is None or base.empty:
+            continue
+        def columna(*nombres):
+            dic = {normalizar(c): c for c in base.columns}
+            return next((dic[normalizar(n)] for n in nombres if normalizar(n) in dic), None)
+        c_ref = columna("REFERENCIA", "Referencia")
+        c_email = columna("EMAIL", "Email", "Correo")
+        if not c_ref or not c_email:
+            continue
+        for _, item in base.iterrows():
+            k = normalizar_referencia(item.get(c_ref, ""))
+            email = str(item.get(c_email, "") or "").strip()
+            if k and "@" in email and k not in contactos:
+                contactos[k] = email
+    try:
+        maestro = cargar_maestro_info_clientes_v2()
+        for k, info in maestro.items():
+            correo = str(info.get("EMAIL", "") or "").strip()
+            if correo and "@" in correo:
+                contactos[k] = correo
+    except Exception as e:
+        # Evitar preparar masivos sin fuente maestra de contacto.
+        raise ValueError("No fue posible leer Info_Clientes_V2 para cruzar DE con correos.") from e
+
+    resultado = []
+    vistos = set()
+    for fila in valores[1:]:
+        ref = normalizar_referencia(fila[0] if len(fila)>0 else "")
+        nombre = str(fila[3] if len(fila)>3 else "").strip()
+        banco = str(fila[5] if len(fila)>5 else "").strip()
+        monto = str(fila[6] if len(fila)>6 else "").strip()
+        if not ref or ref in vistos or not nombre or not banco or monto_de(monto) is None:
+            continue
+        vistos.add(ref)
+        resultado.append({
+            "REFERENCIA": ref, "NOMBRE": nombre,
+            "BANCO": banco, "DE_TRADICIONAL": monto,
+            "EMAIL": contactos.get(ref, ""), "ENCARGADO": "Alianzas"
+        })
+    return pd.DataFrame(resultado, columns=["REFERENCIA","NOMBRE","BANCO","DE_TRADICIONAL","EMAIL","ENCARGADO"])
+
+
 # ============================================================
 # CAMPAÑAS MANUALES / PREPARACIÓN SEGURA
 # ============================================================
@@ -3376,6 +3449,7 @@ TIPOS_CAMPANA_MANUAL = [
     "MORA_90",
     "PERSONALIZADA",
     "ALIANZAS",
+    "ALIANZAS_DE",
 ]
 
 
@@ -3405,6 +3479,8 @@ def obtener_plantilla_generica(id_plantilla):
     idp = str(id_plantilla or "").strip().upper()
     if idp == ALIANZAS_TEMPLATE_ID:
         return plantilla_alianzas_virtual()
+    if idp == ALIANZAS_DE_TEMPLATE_ID:
+        return plantilla_alianzas_de_virtual()
     if idp == PREVENCION_TEMPLATE_ID:
         return plantilla_prevencion_virtual()
     if idp in PLANTILLAS_AL_DIA:
@@ -3464,6 +3540,7 @@ def nombre_plantilla_visible(id_plantilla):
         "T060": "60 días en mora",
         "T090": "90 días en mora",
         "TAL001": "Alianzas · oferta especial",
+        "TALDE001": "Alianzas · Depósito Extra",
         "TPREV001": "Prevención · próximo pago",
     }
     fila = obtener_plantilla_generica(idp)
@@ -3613,6 +3690,8 @@ def preparar_clientes_campana(fila_campana):
         base = pruebas.copy()
     elif tipo == "ALIANZAS":
         base = alianzas.copy()
+    elif tipo == "ALIANZAS_DE":
+        base = leer_fuente_alianzas_deposito_extra()
     else:
         base = clientes.copy()
 
@@ -3673,7 +3752,7 @@ def preparar_clientes_campana(fila_campana):
     elif tipo == "PRUEBA":
         pass
 
-    elif tipo == "ALIANZAS":
+    elif tipo in {"ALIANZAS", "ALIANZAS_DE"}:
         comentarios_guardados = str(fila_campana.get("COMENTARIOS", "") or "")
         m_bancos = re.search(r"\[BANCOS_ALIANZAS:([^\]]*)\]", comentarios_guardados)
         if m_bancos:
@@ -3702,7 +3781,7 @@ def preparar_clientes_campana(fila_campana):
         n_mora_180 = 0
         n_excl = 0
     else:
-        if tipo == "ALIANZAS":
+        if tipo in {"ALIANZAS", "ALIANZAS_DE"}:
             n_mora_180 = 0
         else:
             mask_180 = base.apply(
@@ -4487,11 +4566,11 @@ if not campanas.empty and "ID_CAMPAÑA" in campanas.columns:
         _idc = str(_camp.get("ID_CAMPAÑA", "")).strip()
         _tipo = normalizar(_camp.get("FILTRO", ""))
         _plant = str(_camp.get("PLANTILLA", "")).strip().upper()
-        if _idc and (_tipo == "alianzas" or _plant == ALIANZAS_TEMPLATE_ID):
+        if _idc and (_tipo in {"alianzas", "alianzas_de"} or _plant in {ALIANZAS_TEMPLATE_ID, ALIANZAS_DE_TEMPLATE_ID}):
             _ids_campanas_alianzas.add(_idc)
 
 if "ID_CAMPAÑA" in respuestas.columns:
-    respuestas["_ES_ALIANZAS"] = (respuestas["ID_CAMPAÑA"].astype(str).str.strip().isin(_ids_campanas_alianzas) | respuestas.get("PLANTILLA", pd.Series("", index=respuestas.index)).astype(str).str.strip().str.upper().eq(ALIANZAS_TEMPLATE_ID))
+    respuestas["_ES_ALIANZAS"] = (respuestas["ID_CAMPAÑA"].astype(str).str.strip().isin(_ids_campanas_alianzas) | respuestas.get("PLANTILLA", pd.Series("", index=respuestas.index)).astype(str).str.strip().str.upper().isin([ALIANZAS_TEMPLATE_ID, ALIANZAS_DE_TEMPLATE_ID]))
 else:
     respuestas["_ES_ALIANZAS"] = False
 
@@ -7507,7 +7586,7 @@ elif menu == "📝 Plantillas":
         st.info("No hay plantillas disponibles para previsualizar.")
     else:
         ids_plantilla = [str(x).strip() for x in plantillas["ID_PLANTILLA"].tolist() if str(x).strip()]
-        ids_plantilla.extend([ALIANZAS_TEMPLATE_ID, PREVENCION_TEMPLATE_ID, "ALDIA003", "ALDIA000", "DESCINC001", "ALTPAGO001"])
+        ids_plantilla.extend([ALIANZAS_TEMPLATE_ID, ALIANZAS_DE_TEMPLATE_ID, PREVENCION_TEMPLATE_ID, "ALDIA003", "ALDIA000", "DESCINC001", "ALTPAGO001"])
         ids_plantilla = list(dict.fromkeys(ids_plantilla))
         st.divider()
         st.subheader("👁️ Vista previa de plantilla")
