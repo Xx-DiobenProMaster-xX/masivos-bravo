@@ -3792,7 +3792,7 @@ def preparar_clientes_campana(fila_campana):
     if tipo == "ALIANZAS_DE":
         # Nunca permitir destinatarios incompletos o malformados en Depósito Extra.
         mask_sin_email = ~base["EMAIL"].astype(str).str.fullmatch(
-            r"[A-Za-z0-9.!#$%&'*+/=?^`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+"
+            r"[A-Za-z0-9.!#$%&'*+/=?^`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+"
         ).fillna(False)
     else:
         mask_sin_email = base["EMAIL"].apply(valor_vacio)
