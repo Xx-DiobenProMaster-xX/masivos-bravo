@@ -28,6 +28,20 @@ class ProxyValueRangeTest(unittest.TestCase):
         self.assertIs(resultado, filas)
         self.assertEqual(len(resultado), 2)
         self.assertEqual(resultado[1][1], "x@example.com")
+        # Regresión: clase de gspread que NO hereda de list pero sí
+        # proporciona el protocolo de secuencia.
+        class ValueRangeSequence:
+            def __init__(self, items):
+                self.items = items
+            def __len__(self):
+                return len(self.items)
+            def __getitem__(self, index):
+                return self.items[index]
+        ValueRangeSequence.__module__ = "gspread.worksheet"
+        secuencia = ValueRangeSequence([["Referencia"], ["123"]])
+        self.assertIs(wrap(secuencia), secuencia)
+        self.assertEqual(len(wrap(secuencia)), 2)
+
         class Worksheet: pass
         Worksheet.__module__ = "gspread.worksheet"
         self.assertIsInstance(wrap(Worksheet()), _GSpreadRetryProxy)
