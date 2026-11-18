@@ -1,0 +1,22 @@
+name: Validar plantilla Depósito Extra
+on:
+  pull_request:
+    paths:
+      - 'app .py'
+      - 'alianzas_deposito_extra.py'
+      - 'test_alianzas_deposito_extra.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Comprobar sintaxis del app y módulo
+        run: python -m py_compile "app .py" alianzas_deposito_extra.py
+      - name: Probar formato y HTML sin clientes ni correos
+        run: python -m unittest -v test_alianzas_deposito_extra.py

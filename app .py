@@ -150,6 +150,9 @@ HOJA_CARTERA_BEREX = "2. Cartera Berex"
 ALIANZAS_SOURCE_SPREADSHEET_ID = "1BO59uLIIPwkLcz3LmVEiM7_9IewAzabfBmztbcpYS_c"
 HOJA_ALIANZAS_DESTINO = "ALIANZAS"
 ALIANZAS_TEMPLATE_ID = "TAL001"
+ALIANZAS_DE_TEMPLATE_ID = "TALDE001"
+ALIANZAS_DE_TAB = "DE"
+from alianzas_deposito_extra import html_deposito_extra, monto_de, dinero_colombiano
 PREVENCION_TEMPLATE_ID = "TPREV001"
 MORA_ESTADOS_SPREADSHEET_ID = "1jcPPhtF2YK3Kr7P_A0Mgh2OqhOfnVWB2to3UPoSH5tE"
 HOJA_MORA_COMISION = "Comisión"
@@ -410,7 +413,7 @@ def remitente_segun_campana(campana):
         plantilla = str(campana.get("PLANTILLA", "") or "").strip().upper()
     except (AttributeError, TypeError):
         return GMAIL_FROM
-    return ALIANZAS_RESPUESTAS_EMAIL if tipo == "ALIANZAS" or plantilla == ALIANZAS_TEMPLATE_ID else GMAIL_FROM
+    return ALIANZAS_RESPUESTAS_EMAIL if tipo in {"ALIANZAS", "ALIANZAS_DE"} or plantilla in {ALIANZAS_TEMPLATE_ID, ALIANZAS_DE_TEMPLATE_ID} else GMAIL_FROM
 
 
 def construir_mensaje_gmail(destinatario, asunto, cuerpo_html, remitente=GMAIL_FROM):
@@ -632,7 +635,7 @@ def sincronizar_respuestas_gmail(credenciales, dias=30, max_mensajes=500):
                 def cv(n):
                     j=columnas_camp.get(n)
                     return str(cr[j]).strip() if j is not None and j < len(cr) else ""
-                if cv("FILTRO").upper()=="ALIANZAS" or cv("PLANTILLA").upper()==ALIANZAS_TEMPLATE_ID:
+                if cv("FILTRO").upper() in {"ALIANZAS","ALIANZAS_DE"} or cv("PLANTILLA").upper() in {ALIANZAS_TEMPLATE_ID, ALIANZAS_DE_TEMPLATE_ID}:
                     ids_campanas_alianzas_sync.add(cv("ID_CAMPAÑA"))
     except Exception:
         pass
@@ -726,9 +729,9 @@ def sincronizar_respuestas_gmail(credenciales, dias=30, max_mensajes=500):
 
         candidatos = por_email.get(email_cliente, [])
         if para_alianzas:
-            candidatos = [c for c in candidatos if c["ID_CAMPAÑA"] in ids_campanas_alianzas_sync or c["PLANTILLA"].upper()==ALIANZAS_TEMPLATE_ID]
+            candidatos = [c for c in candidatos if c["ID_CAMPAÑA"] in ids_campanas_alianzas_sync or c["PLANTILLA"].upper() in {ALIANZAS_TEMPLATE_ID, ALIANZAS_DE_TEMPLATE_ID}]
         else:
-            candidatos = [c for c in candidatos if c["ID_CAMPAÑA"] not in ids_campanas_alianzas_sync and c["PLANTILLA"].upper()!=ALIANZAS_TEMPLATE_ID]
+            candidatos = [c for c in candidatos if c["ID_CAMPAÑA"] not in ids_campanas_alianzas_sync and c["PLANTILLA"].upper() not in {ALIANZAS_TEMPLATE_ID, ALIANZAS_DE_TEMPLATE_ID}]
         if not candidatos and not para_alianzas:
             sin_relacion += 1
             continue
@@ -1556,6 +1559,9 @@ def construir_html_campana(id_plantilla, fila, cuerpo_base=""):
 
     if idp == ALIANZAS_TEMPLATE_ID:
         return html_alianzas_bravo(fila.get("NOMBRE", ""), fila.get("BANCO", ""))
+
+    if idp == ALIANZAS_DE_TEMPLATE_ID:
+        return html_deposito_extra(fila.get("NOMBRE", ""), fila.get("BANCO", ""), fila.get("DE_TRADICIONAL", ""), BRAVO_LOGO_URL, ALIANZAS_WHATSAPP)
 
     if idp == PREVENCION_TEMPLATE_ID:
         return html_prevencion_bravo(fila.get("NOMBRE", ""), fila.get("FECHA_PROXIMO_PAGO", ""))
@@ -3357,6 +3363,66 @@ def cargar_alianzas_local():
     except Exception: return pd.DataFrame(columns=["REFERENCIA","CEDULA","BANCO","EMAIL","NOMBRE","ENCARGADO","FUENTE_PESTANA","FECHA_ACTUALIZACION"])
 
 
+def plantilla_alianzas_de_virtual():
+    return pd.Series({
+        "ID_PLANTILLA": ALIANZAS_DE_TEMPLATE_ID,
+        "NOMBRE": "Alianzas · Depósito Extra",
+        "ASUNTO": "¡Una oportunidad especial con {{BANCO}}! | Bravo",
+        "CUERPO": "",
+        "ESTADO": "ACTIVA",
+    })
+
+
+def leer_fuente_alianzas_deposito_extra():
+    """Fuente: Masivos_Descuento_Localizado / DE (gid 323455966).
+
+    Lectura directa y exclusiva de A:J:
+    A Referencia, D Primer Nombre, F Banco, G DE_Tradicional y J Correo.
+    No cruza datos con bases de ilocalizados ni con Info_Clientes_V2.
+    """
+    fuente = obtener_gc().open_by_key(ALIANZAS_SOURCE_SPREADSHEET_ID)
+    valores = fuente.worksheet(ALIANZAS_DE_TAB).get("A:J")
+    columnas = ["REFERENCIA", "NOMBRE", "BANCO", "DE_TRADICIONAL", "EMAIL", "ENCARGADO"]
+    if len(valores) < 2:
+        return pd.DataFrame(columns=columnas)
+
+    # Evitar mapear equivocadamente si alguien cambia la estructura de DE.
+    cabecera = [normalizar(x).strip().lower() for x in valores[0]]
+    campos_esperados = {
+        0: {"referencia"},
+        3: {"primer nombre", "primer_nombre"},
+        5: {"banco"},
+        6: {"de_tradicional", "de tradicional"},
+        9: {"correo", "email"},
+    }
+    for posicion, posibles in campos_esperados.items():
+        encontrado = cabecera[posicion] if len(cabecera) > posicion else ""
+        if encontrado not in posibles:
+            raise ValueError(
+                f"La hoja DE cambió su estructura: columna {posicion + 1} "
+                f"debe ser {sorted(posibles)} y aparece '{encontrado}'. "
+                "No se preparó ninguna campaña."
+            )
+
+    resultado = []
+    vistos = set()
+    for fila in valores[1:]:
+        ref = normalizar_referencia(fila[0] if len(fila) > 0 else "")
+        nombre = str(fila[3] if len(fila) > 3 else "").strip()
+        banco = str(fila[5] if len(fila) > 5 else "").strip()
+        monto = str(fila[6] if len(fila) > 6 else "").strip()
+        correo = str(fila[9] if len(fila) > 9 else "").strip().lower()
+        if not ref or not ref.isdigit() or ref in vistos or not nombre or not banco or monto_de(monto) is None:
+            continue
+        vistos.add(ref)
+        resultado.append({
+            "REFERENCIA": ref, "NOMBRE": nombre,
+            "BANCO": banco, "DE_TRADICIONAL": monto,
+            "EMAIL": correo, "ENCARGADO": "Alianzas",
+        })
+    return pd.DataFrame(resultado, columns=columnas)
+
+
 # ============================================================
 # CAMPAÑAS MANUALES / PREPARACIÓN SEGURA
 # ============================================================
@@ -3376,6 +3442,7 @@ TIPOS_CAMPANA_MANUAL = [
     "MORA_90",
     "PERSONALIZADA",
     "ALIANZAS",
+    "ALIANZAS_DE",
 ]
 
 
@@ -3398,6 +3465,7 @@ def obtener_ids_plantillas_activas():
     }
     ids.update(PLANTILLAS_BENEFICIOS.keys())
     ids.add(PREVENCION_TEMPLATE_ID)
+    ids.add(ALIANZAS_DE_TEMPLATE_ID)
     return sorted(ids)
 
 
@@ -3405,6 +3473,8 @@ def obtener_plantilla_generica(id_plantilla):
     idp = str(id_plantilla or "").strip().upper()
     if idp == ALIANZAS_TEMPLATE_ID:
         return plantilla_alianzas_virtual()
+    if idp == ALIANZAS_DE_TEMPLATE_ID:
+        return plantilla_alianzas_de_virtual()
     if idp == PREVENCION_TEMPLATE_ID:
         return plantilla_prevencion_virtual()
     if idp in PLANTILLAS_AL_DIA:
@@ -3464,6 +3534,7 @@ def nombre_plantilla_visible(id_plantilla):
         "T060": "60 días en mora",
         "T090": "90 días en mora",
         "TAL001": "Alianzas · oferta especial",
+        "TALDE001": "Alianzas · Depósito Extra",
         "TPREV001": "Prevención · próximo pago",
     }
     fila = obtener_plantilla_generica(idp)
@@ -3613,6 +3684,8 @@ def preparar_clientes_campana(fila_campana):
         base = pruebas.copy()
     elif tipo == "ALIANZAS":
         base = alianzas.copy()
+    elif tipo == "ALIANZAS_DE":
+        base = leer_fuente_alianzas_deposito_extra()
     else:
         base = clientes.copy()
 
@@ -3673,7 +3746,7 @@ def preparar_clientes_campana(fila_campana):
     elif tipo == "PRUEBA":
         pass
 
-    elif tipo == "ALIANZAS":
+    elif tipo in {"ALIANZAS", "ALIANZAS_DE"}:
         comentarios_guardados = str(fila_campana.get("COMENTARIOS", "") or "")
         m_bancos = re.search(r"\[BANCOS_ALIANZAS:([^\]]*)\]", comentarios_guardados)
         if m_bancos:
@@ -3702,7 +3775,7 @@ def preparar_clientes_campana(fila_campana):
         n_mora_180 = 0
         n_excl = 0
     else:
-        if tipo == "ALIANZAS":
+        if tipo in {"ALIANZAS", "ALIANZAS_DE"}:
             n_mora_180 = 0
         else:
             mask_180 = base.apply(
@@ -3716,7 +3789,13 @@ def preparar_clientes_campana(fila_campana):
         n_excl = entero_seguro(mask_excl.sum())
         base = base[~mask_excl].copy()
 
-    mask_sin_email = base["EMAIL"].apply(valor_vacio)
+    if tipo == "ALIANZAS_DE":
+        # Nunca permitir destinatarios incompletos o malformados en Depósito Extra.
+        mask_sin_email = ~base["EMAIL"].astype(str).str.fullmatch(
+            r"[A-Za-z0-9.!#$%&'*+/=?^`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+"
+        ).fillna(False)
+    else:
+        mask_sin_email = base["EMAIL"].apply(valor_vacio)
     n_sin_email = entero_seguro(mask_sin_email.sum())
     base = base[~mask_sin_email].copy()
 
@@ -4487,11 +4566,11 @@ if not campanas.empty and "ID_CAMPAÑA" in campanas.columns:
         _idc = str(_camp.get("ID_CAMPAÑA", "")).strip()
         _tipo = normalizar(_camp.get("FILTRO", ""))
         _plant = str(_camp.get("PLANTILLA", "")).strip().upper()
-        if _idc and (_tipo == "alianzas" or _plant == ALIANZAS_TEMPLATE_ID):
+        if _idc and (_tipo in {"alianzas", "alianzas_de"} or _plant in {ALIANZAS_TEMPLATE_ID, ALIANZAS_DE_TEMPLATE_ID}):
             _ids_campanas_alianzas.add(_idc)
 
 if "ID_CAMPAÑA" in respuestas.columns:
-    respuestas["_ES_ALIANZAS"] = (respuestas["ID_CAMPAÑA"].astype(str).str.strip().isin(_ids_campanas_alianzas) | respuestas.get("PLANTILLA", pd.Series("", index=respuestas.index)).astype(str).str.strip().str.upper().eq(ALIANZAS_TEMPLATE_ID))
+    respuestas["_ES_ALIANZAS"] = (respuestas["ID_CAMPAÑA"].astype(str).str.strip().isin(_ids_campanas_alianzas) | respuestas.get("PLANTILLA", pd.Series("", index=respuestas.index)).astype(str).str.strip().str.upper().isin([ALIANZAS_TEMPLATE_ID, ALIANZAS_DE_TEMPLATE_ID]))
 else:
     respuestas["_ES_ALIANZAS"] = False
 
@@ -6364,8 +6443,9 @@ elif menu == "🤝 Alianzas":
         unsafe_allow_html=True
     )
 
-    tab_base_alianzas, tab_resp_alianzas = st.tabs([
+    tab_base_alianzas, tab_deposito_extra, tab_resp_alianzas = st.tabs([
         "📨 Base y campañas",
+        "💰 Depósito Extra",
         "💬 Respuestas Alianzas",
     ])
 
@@ -6507,6 +6587,101 @@ elif menu == "🤝 Alianzas":
                         st.rerun()
                     except Exception as e:
                         st.error(f"❌ No pude crear la campaña: {e}")
+
+    with tab_deposito_extra:
+        st.subheader("💰 Alianzas · Depósito Extra")
+        st.info(
+            "Fuente: Masivos_Descuento_LIocalizado → pestaña DE. "
+            "A = Referencia, D = Primer Nombre, F = Banco, G = DE_Tradicional. "
+            "Los correos se completan por referencia desde Info_Clientes_V2 y las bases BRAVO; "
+            "no se modifica la base de ilocalizados."
+        )
+        if st.button("🔄 Consultar base DE", key="de_actualizar"):
+            st.cache_data.clear()
+            st.rerun()
+        try:
+            base_de = leer_fuente_alianzas_deposito_extra()
+        except Exception as error_de:
+            base_de = pd.DataFrame()
+            st.error("No se pudo consultar DE: " + str(error_de))
+        if base_de.empty:
+            st.warning("No hay registros válidos con referencia, nombre, banco y DE_Tradicional mayor a cero.")
+        else:
+            total_de = len(base_de)
+            con_mail_de = int(base_de["EMAIL"].astype(str).str.fullmatch(
+                r"[^@\s]+@[^@\s]+\.[^@\s]+"
+            ).fillna(False).sum())
+            met1,met2,met3 = st.columns(3)
+            met1.metric("Referencias DE válidas", total_de)
+            met2.metric("Con correo", con_mail_de)
+            met3.metric("Sin correo", total_de-con_mail_de)
+            bancos_de = sorted(x for x in base_de["BANCO"].unique() if str(x).strip())
+            bancos_elegidos_de = st.multiselect(
+                "Bancos a incluir · Depósito Extra",
+                bancos_de,
+                default=bancos_de,
+                key="bancos_de_extra",
+            )
+            vista_de = base_de[base_de["BANCO"].isin(bancos_elegidos_de)].copy()
+            vista_de["DE_ESTIMADO"] = vista_de["DE_TRADICIONAL"].apply(dinero_colombiano)
+            st.dataframe(
+                vista_de[["REFERENCIA","NOMBRE","BANCO","DE_ESTIMADO","EMAIL"]].head(300),
+                use_container_width=True, hide_index=True
+            )
+            with st.expander("👁️ Ver ejemplo Depósito Extra · TALDE001",expanded=False):
+                if vista_de.empty:
+                    st.info("Selecciona al menos un banco.")
+                else:
+                    ej_de = vista_de.iloc[0]
+                    st.caption(
+                        "Vista previa con valores reales de la primera referencia mostrada. "
+                        "DE_Tradicional se presenta como aporte adicional estimado."
+                    )
+                    components.html(
+                        html_deposito_extra(
+                            ej_de["NOMBRE"], ej_de["BANCO"], ej_de["DE_TRADICIONAL"],
+                            BRAVO_LOGO_URL, ALIANZAS_WHATSAPP
+                        ), height=950, scrolling=True
+                    )
+            with st.form("form_alianzas_deposito_extra"):
+                nombre_de = st.text_input(
+                    "Nombre de la campaña · Depósito Extra",
+                    value=f"Alianzas Depósito Extra - {HOY.strftime('%d/%m/%Y')}"
+                )
+                c_de1,c_de2 = st.columns(2)
+                with c_de1:
+                    fecha_de = st.date_input("Fecha programada DE",value=HOY,key="fecha_de")
+                with c_de2:
+                    hora_de = st.time_input("Hora programada DE",value=AHORA.replace(second=0,microsecond=0).time(),key="hora_de")
+                comentario_de = st.text_area("Comentarios internos DE",height=75)
+                confirmar_de = st.checkbox(
+                    "He revisado la base DE y los importes estimados; crear únicamente como BORRADOR."
+                )
+                crear_de = st.form_submit_button(
+                    "💾 Crear campaña DEPÓSITO EXTRA como BORRADOR",
+                    type="primary", use_container_width=True
+                )
+            if crear_de:
+                if not bancos_elegidos_de:
+                    st.error("Selecciona al menos un banco.")
+                elif con_mail_de == 0:
+                    st.error("No hay correos vinculados para DE. No se creará la campaña.")
+                elif not confirmar_de:
+                    st.error("Confirma la revisión de los importes antes de crear.")
+                else:
+                    try:
+                        marca_de = "[BANCOS_ALIANZAS:" + "|".join(bancos_elegidos_de) + "]"
+                        id_de = crear_campana_manual(
+                            nombre_de, "ALIANZAS_DE", ALIANZAS_DE_TEMPLATE_ID,
+                            fecha_de, hora_de,
+                            (comentario_de + "\n" if comentario_de else "")+marca_de, ""
+                        )
+                        st.success(
+                            f"Campaña {id_de} creada como BORRADOR. "
+                            "Ve a 📧 Campañas para revisar la elegibilidad, preparar y autorizar el envío."
+                        )
+                    except Exception as exc_de:
+                        st.error("No se pudo crear la campaña: "+str(exc_de))
 
     with tab_resp_alianzas:
         if st.button("🔄 Sincronizar respuestas de Alianzas", key="sync_respuestas_alianzas"):
@@ -7507,7 +7682,7 @@ elif menu == "📝 Plantillas":
         st.info("No hay plantillas disponibles para previsualizar.")
     else:
         ids_plantilla = [str(x).strip() for x in plantillas["ID_PLANTILLA"].tolist() if str(x).strip()]
-        ids_plantilla.extend([ALIANZAS_TEMPLATE_ID, PREVENCION_TEMPLATE_ID, "ALDIA003", "ALDIA000", "DESCINC001", "ALTPAGO001"])
+        ids_plantilla.extend([ALIANZAS_TEMPLATE_ID, ALIANZAS_DE_TEMPLATE_ID, PREVENCION_TEMPLATE_ID, "ALDIA003", "ALDIA000", "DESCINC001", "ALTPAGO001"])
         ids_plantilla = list(dict.fromkeys(ids_plantilla))
         st.divider()
         st.subheader("👁️ Vista previa de plantilla")
@@ -7522,6 +7697,11 @@ elif menu == "📝 Plantillas":
                 ejemplo={"NOMBRE":"Cliente de ejemplo","REFERENCIA":"PRUEBA-001","EMAIL":"cliente@ejemplo.com","BANCO":"Banco de ejemplo","ENCARGADO":"Alianzas"}
                 asunto_preview=reemplazar_variables_genericas(fila_preview.get("ASUNTO",""),ejemplo)
                 html_preview=html_alianzas_bravo(ejemplo["NOMBRE"],ejemplo["BANCO"])
+            elif id_upper == ALIANZAS_DE_TEMPLATE_ID:
+                fila_preview = plantilla_alianzas_de_virtual()
+                ejemplo = {"NOMBRE":"Cliente de ejemplo","REFERENCIA":"PRUEBA-DE-001","EMAIL":"cliente@ejemplo.com","BANCO":"Banco de ejemplo","DE_TRADICIONAL":"1600000","ENCARGADO":"Alianzas"}
+                asunto_preview = reemplazar_variables_genericas(fila_preview.get("ASUNTO",""),ejemplo)
+                html_preview = html_deposito_extra(ejemplo["NOMBRE"],ejemplo["BANCO"],ejemplo["DE_TRADICIONAL"],BRAVO_LOGO_URL,ALIANZAS_WHATSAPP)
             elif id_upper == PREVENCION_TEMPLATE_ID:
                 fila_preview = plantilla_prevencion_virtual()
                 ejemplo = {"NOMBRE":"Cliente de ejemplo","REFERENCIA":"3176743342","EMAIL":"cliente@ejemplo.com","FECHA_PROXIMO_PAGO":"31/10/2026","ENCARGADO":"Equipo Bravo"}
