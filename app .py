@@ -3389,20 +3389,43 @@ def leer_fuente_alianzas_deposito_extra():
     A Referencia, D Primer Nombre, F Banco, G DE_Tradicional y J Correo.
     No cruza datos con bases de ilocalizados ni con Info_Clientes_V2.
     """
-    fuente = obtener_gc().open_by_key(ALIANZAS_SOURCE_SPREADSHEET_ID)
-    # Mismo acceso que cargar_hoja(): values_get devuelve un diccionario
-    # estándar; evita Worksheet.get()/ValueRange y el proxy sin len().
-    hoja_segura = str(ALIANZAS_DE_TAB).replace("'", "''")
-    respuesta = fuente.values_get(f"'{hoja_segura}'!A:J")
-    if isinstance(respuesta, _GSpreadRetryProxy):
-        # Compatibilidad defensiva con posibles proxies cacheados en Streamlit.
-        respuesta = respuesta._obj
-    if not isinstance(respuesta, dict):
-        raise ValueError(
-            "La lectura de DE no devolvió el diccionario esperado de Google Sheets. "
-            f"Tipo recibido: {type(respuesta).__name__}"
+    # DE es una lectura aislada: evitar por completo _GSpreadRetryProxy.
+    # El proxy de la aplicación no implementa la interfaz de secuencia y
+    # puede causar el error '_GSpreadRetryProxy has no len()' dentro de gspread.
+    cliente_con_retry = obtener_gc()
+    cliente_directo = (
+        cliente_con_retry._obj
+        if isinstance(cliente_con_retry, _GSpreadRetryProxy)
+        else cliente_con_retry
+    )
+    # Reutilizar la cuenta de servicio actual, sin permisos ni secretos nuevos.
+    # Usar exactamente el mismo tipo de lectura que la base de ilocalizados.
+    try:
+        libro = _retry(
+            lambda: cliente_directo.open_by_key(ALIANZAS_SOURCE_SPREADSHEET_ID),
+            label="DE.open_by_key",
         )
-    valores = respuesta.get("values", [])
+        worksheet_de = _retry(
+            lambda: libro.worksheet(ALIANZAS_DE_TAB),
+            label="DE.worksheet",
+        )
+        valores = _retry(
+            lambda: worksheet_de.get_all_values(),
+            label="DE.get_all_values",
+        )
+    except Exception as error_de:
+        import traceback
+        print("ERROR CONSULTA DE (stack completo):")
+        traceback.print_exc()
+        raise ValueError(
+            "Falló la lectura directa de DE (revisar logs de Streamlit). "
+            f"{type(error_de).__name__}: {error_de}"
+        ) from error_de
+    if not isinstance(valores, list):
+        raise ValueError(
+            "DE devolvió datos con formato inesperado: "
+            f"{type(valores).__name__} (esperado: lista de filas)."
+        )
     columnas = ["REFERENCIA", "NOMBRE", "BANCO", "DE_TRADICIONAL", "EMAIL", "ENCARGADO"]
     if len(valores) < 2:
         return pd.DataFrame(columns=columnas)
