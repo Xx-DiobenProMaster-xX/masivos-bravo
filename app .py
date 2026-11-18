@@ -86,7 +86,10 @@ def _wrap_gspread_result(value):
         return value
 
     module = getattr(value.__class__, "__module__", "")
-    if module.startswith("gspread"):
+    clase = getattr(value.__class__, "__name__", "")
+    # Solo envolver objetos de API; ValueRange u otros resultados tabulares
+    # pueden no heredar de list y requieren len(), indexación e iteración.
+    if module.startswith("gspread") and clase in {"Client", "Spreadsheet", "Worksheet"}:
         return _GSpreadRetryProxy(value)
 
     return value
