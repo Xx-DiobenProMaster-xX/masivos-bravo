@@ -3431,20 +3431,40 @@ def leer_fuente_alianzas_deposito_extra():
         return pd.DataFrame(columns=columnas)
 
     # Evitar mapear equivocadamente si alguien cambia la estructura de DE.
-    cabecera = [normalizar(x).strip().lower() for x in valores[0]]
+    # Normalización LOCAL de encabezados DE: no afecta las demás campañas.
+    # Sheets puede incluir espacios no separables, caracteres de ancho cero,
+    # o guiones bajos aunque el texto parezca idéntico en pantalla.
+    import re
+    import unicodedata
+
+    def clave_cabecera_de(valor):
+        texto = unicodedata.normalize("NFKC", str(valor or ""))
+        texto = "".join(
+            " " if unicodedata.category(c).startswith("Z") else c
+            for c in texto
+            if not unicodedata.category(c).startswith("C")
+        )
+        texto = unicodedata.normalize("NFKD", texto)
+        texto = "".join(c for c in texto if unicodedata.category(c) != "Mn")
+        return re.sub(r"[\s_]+", " ", texto).strip().casefold()
+
+    cabecera = [clave_cabecera_de(x) for x in valores[0]]
     campos_esperados = {
         0: {"referencia"},
-        3: {"primer nombre", "primer_nombre"},
+        3: {"primer nombre", "pimer nombre"},
         5: {"banco"},
-        6: {"de_tradicional", "de tradicional"},
+        6: {"de tradicional"},
         9: {"correo", "email"},
     }
     for posicion, posibles in campos_esperados.items():
         encontrado = cabecera[posicion] if len(cabecera) > posicion else ""
         if encontrado not in posibles:
+            original = valores[0][posicion] if len(valores[0]) > posicion else ""
             raise ValueError(
                 f"La hoja DE cambió su estructura: columna {posicion + 1} "
-                f"debe ser {sorted(posibles)} y aparece '{encontrado}'. "
+                f"debe ser {sorted(posibles)} y aparece {original!r} "
+                f"(normalizado: {encontrado!r}; "
+                f"caracteres: {[hex(ord(c)) for c in str(original)]}). "
                 "No se preparó ninguna campaña."
             )
 
