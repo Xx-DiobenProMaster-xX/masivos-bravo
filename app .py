@@ -635,7 +635,7 @@ def sincronizar_respuestas_gmail(credenciales, dias=30, max_mensajes=500):
                 def cv(n):
                     j=columnas_camp.get(n)
                     return str(cr[j]).strip() if j is not None and j < len(cr) else ""
-                if cv("FILTRO").upper()=="ALIANZAS" or cv("PLANTILLA").upper()==ALIANZAS_TEMPLATE_ID:
+                if cv("FILTRO").upper() in {"ALIANZAS","ALIANZAS_DE"} or cv("PLANTILLA").upper() in {ALIANZAS_TEMPLATE_ID, ALIANZAS_DE_TEMPLATE_ID}:
                     ids_campanas_alianzas_sync.add(cv("ID_CAMPAÑA"))
     except Exception:
         pass
@@ -729,9 +729,9 @@ def sincronizar_respuestas_gmail(credenciales, dias=30, max_mensajes=500):
 
         candidatos = por_email.get(email_cliente, [])
         if para_alianzas:
-            candidatos = [c for c in candidatos if c["ID_CAMPAÑA"] in ids_campanas_alianzas_sync or c["PLANTILLA"].upper()==ALIANZAS_TEMPLATE_ID]
+            candidatos = [c for c in candidatos if c["ID_CAMPAÑA"] in ids_campanas_alianzas_sync or c["PLANTILLA"].upper() in {ALIANZAS_TEMPLATE_ID, ALIANZAS_DE_TEMPLATE_ID}]
         else:
-            candidatos = [c for c in candidatos if c["ID_CAMPAÑA"] not in ids_campanas_alianzas_sync and c["PLANTILLA"].upper()!=ALIANZAS_TEMPLATE_ID]
+            candidatos = [c for c in candidatos if c["ID_CAMPAÑA"] not in ids_campanas_alianzas_sync and c["PLANTILLA"].upper() not in {ALIANZAS_TEMPLATE_ID, ALIANZAS_DE_TEMPLATE_ID}]
         if not candidatos and not para_alianzas:
             sin_relacion += 1
             continue
