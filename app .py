@@ -3412,7 +3412,7 @@ def leer_fuente_alianzas_deposito_extra():
         banco = str(fila[5] if len(fila) > 5 else "").strip()
         monto = str(fila[6] if len(fila) > 6 else "").strip()
         correo = str(fila[9] if len(fila) > 9 else "").strip().lower()
-        if not ref or ref in vistos or not nombre or not banco or monto_de(monto) is None:
+        if not ref or not ref.isdigit() or ref in vistos or not nombre or not banco or monto_de(monto) is None:
             continue
         vistos.add(ref)
         resultado.append({
