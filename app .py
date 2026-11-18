@@ -3472,6 +3472,7 @@ def obtener_ids_plantillas_activas():
     }
     ids.update(PLANTILLAS_BENEFICIOS.keys())
     ids.add(PREVENCION_TEMPLATE_ID)
+    ids.add(ALIANZAS_DE_TEMPLATE_ID)
     return sorted(ids)
 
 
@@ -7695,6 +7696,11 @@ elif menu == "📝 Plantillas":
                 ejemplo={"NOMBRE":"Cliente de ejemplo","REFERENCIA":"PRUEBA-001","EMAIL":"cliente@ejemplo.com","BANCO":"Banco de ejemplo","ENCARGADO":"Alianzas"}
                 asunto_preview=reemplazar_variables_genericas(fila_preview.get("ASUNTO",""),ejemplo)
                 html_preview=html_alianzas_bravo(ejemplo["NOMBRE"],ejemplo["BANCO"])
+            elif id_upper == ALIANZAS_DE_TEMPLATE_ID:
+                fila_preview = plantilla_alianzas_de_virtual()
+                ejemplo = {"NOMBRE":"Cliente de ejemplo","REFERENCIA":"PRUEBA-DE-001","EMAIL":"cliente@ejemplo.com","BANCO":"Banco de ejemplo","DE_TRADICIONAL":"1600000","ENCARGADO":"Alianzas"}
+                asunto_preview = reemplazar_variables_genericas(fila_preview.get("ASUNTO",""),ejemplo)
+                html_preview = html_deposito_extra(ejemplo["NOMBRE"],ejemplo["BANCO"],ejemplo["DE_TRADICIONAL"],BRAVO_LOGO_URL,ALIANZAS_WHATSAPP)
             elif id_upper == PREVENCION_TEMPLATE_ID:
                 fila_preview = plantilla_prevencion_virtual()
                 ejemplo = {"NOMBRE":"Cliente de ejemplo","REFERENCIA":"3176743342","EMAIL":"cliente@ejemplo.com","FECHA_PROXIMO_PAGO":"31/10/2026","ENCARGADO":"Equipo Bravo"}
