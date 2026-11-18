@@ -3374,60 +3374,53 @@ def plantilla_alianzas_de_virtual():
 
 
 def leer_fuente_alianzas_deposito_extra():
-    """Fuente: Masivos_Descuento_LIocalizado / DE (gid 323455966).
+    """Fuente: Masivos_Descuento_Localizado / DE (gid 323455966).
 
-    Columnas A=Referencia D=Primer Nombre F=Banco G=DE_Tradicional.
-    La fuente DE no contiene correos; se cruzan por referencia con
-    Info_Clientes_V2, CLIENTES y ALIANZAS, sin sobrescribir sus bases.
+    Lectura directa y exclusiva de A:J:
+    A Referencia, D Primer Nombre, F Banco, G DE_Tradicional y J Correo.
+    No cruza datos con bases de ilocalizados ni con Info_Clientes_V2.
     """
     fuente = obtener_gc().open_by_key(ALIANZAS_SOURCE_SPREADSHEET_ID)
-    valores = fuente.worksheet(ALIANZAS_DE_TAB).get("A:G")
+    valores = fuente.worksheet(ALIANZAS_DE_TAB).get("A:J")
+    columnas = ["REFERENCIA", "NOMBRE", "BANCO", "DE_TRADICIONAL", "EMAIL", "ENCARGADO"]
     if len(valores) < 2:
-        return pd.DataFrame(columns=["REFERENCIA", "NOMBRE", "BANCO", "DE_TRADICIONAL", "EMAIL", "ENCARGADO"])
+        return pd.DataFrame(columns=columnas)
 
-    # La hoja DE no proporciona email. Obtenerlo sin recurrir a cifras falsas.
-    contactos = {}
-    for base in (alianzas, clientes):
-        if base is None or base.empty:
-            continue
-        def columna(*nombres):
-            dic = {normalizar(c): c for c in base.columns}
-            return next((dic[normalizar(n)] for n in nombres if normalizar(n) in dic), None)
-        c_ref = columna("REFERENCIA", "Referencia")
-        c_email = columna("EMAIL", "Email", "Correo")
-        if not c_ref or not c_email:
-            continue
-        for _, item in base.iterrows():
-            k = normalizar_referencia(item.get(c_ref, ""))
-            email = str(item.get(c_email, "") or "").strip()
-            if k and "@" in email and k not in contactos:
-                contactos[k] = email
-    try:
-        maestro = cargar_maestro_info_clientes_v2()
-        for k, info in maestro.items():
-            correo = str(info.get("EMAIL", "") or "").strip()
-            if correo and "@" in correo:
-                contactos[k] = correo
-    except Exception as e:
-        # Evitar preparar masivos sin fuente maestra de contacto.
-        raise ValueError("No fue posible leer Info_Clientes_V2 para cruzar DE con correos.") from e
+    # Evitar mapear equivocadamente si alguien cambia la estructura de DE.
+    cabecera = [normalizar(x).strip() for x in valores[0]]
+    campos_esperados = {
+        0: {"referencia"},
+        3: {"primer nombre", "primer_nombre"},
+        5: {"banco"},
+        6: {"de_tradicional", "de tradicional"},
+        9: {"correo", "email"},
+    }
+    for posicion, posibles in campos_esperados.items():
+        encontrado = cabecera[posicion] if len(cabecera) > posicion else ""
+        if encontrado not in posibles:
+            raise ValueError(
+                f"La hoja DE cambió su estructura: columna {posicion + 1} "
+                f"debe ser {sorted(posibles)} y aparece '{encontrado}'. "
+                "No se preparó ninguna campaña."
+            )
 
     resultado = []
     vistos = set()
     for fila in valores[1:]:
-        ref = normalizar_referencia(fila[0] if len(fila)>0 else "")
-        nombre = str(fila[3] if len(fila)>3 else "").strip()
-        banco = str(fila[5] if len(fila)>5 else "").strip()
-        monto = str(fila[6] if len(fila)>6 else "").strip()
+        ref = normalizar_referencia(fila[0] if len(fila) > 0 else "")
+        nombre = str(fila[3] if len(fila) > 3 else "").strip()
+        banco = str(fila[5] if len(fila) > 5 else "").strip()
+        monto = str(fila[6] if len(fila) > 6 else "").strip()
+        correo = str(fila[9] if len(fila) > 9 else "").strip().lower()
         if not ref or ref in vistos or not nombre or not banco or monto_de(monto) is None:
             continue
         vistos.add(ref)
         resultado.append({
             "REFERENCIA": ref, "NOMBRE": nombre,
             "BANCO": banco, "DE_TRADICIONAL": monto,
-            "EMAIL": contactos.get(ref, ""), "ENCARGADO": "Alianzas"
+            "EMAIL": correo, "ENCARGADO": "Alianzas",
         })
-    return pd.DataFrame(resultado, columns=["REFERENCIA","NOMBRE","BANCO","DE_TRADICIONAL","EMAIL","ENCARGADO"])
+    return pd.DataFrame(resultado, columns=columnas)
 
 
 # ============================================================
@@ -3796,7 +3789,13 @@ def preparar_clientes_campana(fila_campana):
         n_excl = entero_seguro(mask_excl.sum())
         base = base[~mask_excl].copy()
 
-    mask_sin_email = base["EMAIL"].apply(valor_vacio)
+    if tipo == "ALIANZAS_DE":
+        # Nunca permitir destinatarios incompletos o malformados en Depósito Extra.
+        mask_sin_email = ~base["EMAIL"].astype(str).str.fullmatch(
+            r"[A-Za-z0-9.!#$%&'*+/=?^`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+"
+        ).fillna(False)
+    else:
+        mask_sin_email = base["EMAIL"].apply(valor_vacio)
     n_sin_email = entero_seguro(mask_sin_email.sum())
     base = base[~mask_sin_email].copy()
 
